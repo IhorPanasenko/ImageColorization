@@ -82,3 +82,5 @@ def load_model(model_type, checkpoint_path, device):
 def process_image(img_path):
     img = Image.open(img_path).convert("RGB")
     original_size = img.size # (W, H)
+
+    
