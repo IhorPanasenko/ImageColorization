@@ -1,0 +1,37 @@
+{
+    "name": "ImageColorization",
+    "build": {
+        "dockerfile": "../Dockerfile",
+        "context": ".."
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "ms-toolsai.jupyter",
+                "ms-toolsai.tensorboard"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "/usr/local/bin/python",
+                "python.analysis.typeCheckingMode": "basic",
+                "editor.formatOnSave": true,
+                "editor.rulers": [100]
+            }
+        }
+    },
+    "mounts": [
+        // Mount the COCO dataset from the host to avoid re-downloading inside the container.
+        // Update the source path to match your local dataset location.
+        "source=${localWorkspaceFolder}/data,target=/workspace/data,type=bind,consistency=cached"
+    ],
+    "forwardPorts": [6006],
+    "portsAttributes": {
+        "6006": {
+            "label": "TensorBoard",
+            "onAutoForward": "openBrowser"
+        }
+    },
+    "postCreateCommand": "echo 'Container ready. Run: python scripts/trains/train.py --help'",
+    "remoteUser": "root"
+}

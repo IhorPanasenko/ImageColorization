@@ -1,23 +1,39 @@
-# Ігноруємо віртуальне середовище
+# Virtual environment
 venv/
 .env
 
-# Ігноруємо системні файли macOS
+# macOS
 .DS_Store
 
-# Ігноруємо кеш Python
+# Python cache
 __pycache__/
 *.py[cod]
 
-# Ігноруємо великі дані (Датасети)
+# Datasets (large files)
 data/
-# Якщо хочеш зберегти структуру папок, але не файли, можна додати .gitkeep пізніше,
-# але поки просто ігноруємо всю папку data, щоб не залити 1 ГБ картинок.
 
-# Ігноруємо важкі чекпоінти моделей (щоб не забивати ліміт GitHub)
+# Model checkpoints (large files)
 checkpoints/
 *.pth
 
-# Ігноруємо логи та тимчасові файли ідей
+# Jupyter
 .ipynb_checkpoints
 *.ipynb
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# API / Python pycache
+api/__pycache__/
+
+# Runtime outputs
+outputs/uploads/
+outputs/runs/
+*.log
+
+# Node / npm
+node_modules/
+npm-debug.log*
+yarn-error.log*
