@@ -3,8 +3,11 @@ import os
 import argparse
 import torch
 
-# Resolve src package from scripts/
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Resolve paths relative to project root (2 levels up from scripts/)
+_SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
+_ML_ROOT      = os.path.abspath(os.path.join(_SCRIPT_DIR, '..'))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_ML_ROOT, '..'))
+sys.path.append(_ML_ROOT)
 
 from src.models.baseline_cnn import BaselineCNN
 from src.models.u_net import UNet
@@ -19,11 +22,11 @@ def get_args():
     parser.add_argument("--model",      type=str, default="gan",
                         choices=["baseline", "unet", "gan", "fusion"],
                         help="Model type to evaluate")
-    parser.add_argument("--checkpoint", type=str, default="./outputs/checkpoints/gan_generator_final.pth",
+    parser.add_argument("--checkpoint", type=str, default=os.path.join(_PROJECT_ROOT, "outputs", "checkpoints", "gan_generator_final.pth"),
                         help="Path to the .pth weights file")
-    parser.add_argument("--img_path",   type=str, default="./data/test_samples",
+    parser.add_argument("--img_path",   type=str, default=os.path.join(_PROJECT_ROOT, "data", "test_samples"),
                         help="Path to a single image file or a directory of images")
-    parser.add_argument("--save_dir",   type=str, default="./outputs/images",
+    parser.add_argument("--save_dir",   type=str, default=os.path.join(_PROJECT_ROOT, "outputs", "images"),
                         help="Directory to save comparison strips")
     parser.add_argument("--device",     type=str, default="auto",
                         help="Device override: 'cuda', 'mps', or 'cpu' (default: auto-detect)")

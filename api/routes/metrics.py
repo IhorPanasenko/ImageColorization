@@ -75,7 +75,7 @@ def batch_evaluate():
         result = _svc.evaluate_samples(
             data.get('model', 'unet'),
             data.get('checkpoint', ''),
-            sample_dir=current_app.config.get('SAMPLE_DIR', 'data/test_samples'),
+            sample_dir=current_app.config['SAMPLE_DIR'],
         )
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500

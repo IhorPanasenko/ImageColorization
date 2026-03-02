@@ -170,6 +170,12 @@ class TrainRunner:
             cmd += ['--lambda_l1', str(params['lambda_l1'])]
         if 'data_path' in params:
             cmd += ['--data_path', str(params['data_path'])]
+        if 'save_dir' in params:
+            cmd += ['--save_dir', str(params['save_dir'])]
+        if 'log_dir' in params:
+            cmd += ['--log_dir', str(params['log_dir'])]
+        if params.get('resume'):
+            cmd += ['--resume', str(params['resume'])]
         if params.get('resume_g'):
             cmd += ['--resume_g', str(params['resume_g'])]
         if params.get('resume_d'):

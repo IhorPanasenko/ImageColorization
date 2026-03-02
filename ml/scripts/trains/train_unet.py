@@ -9,7 +9,11 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+# Resolve paths relative to project root (3 levels up from scripts/trains/)
+_SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
+_ML_ROOT      = os.path.abspath(os.path.join(_SCRIPT_DIR, '..', '..'))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_ML_ROOT, '..'))
+sys.path.append(_ML_ROOT)
 
 from src.models.u_net import UNet
 from src.utils.dataset import ColorizationDataset
@@ -20,10 +24,10 @@ def get_args():
     parser.add_argument("--epochs",     type=int,   default=20,                      help="Number of training epochs")
     parser.add_argument("--batch_size", type=int,   default=16,                      help="Batch size")
     parser.add_argument("--lr",         type=float, default=2e-4,                    help="Initial learning rate")
-    parser.add_argument("--data_path",  type=str,   default="./data/coco/val2017",   help="Path to training images")
-    parser.add_argument("--save_dir",   type=str,   default="./outputs/checkpoints", help="Directory to save checkpoints")
+    parser.add_argument("--data_path",  type=str,   default=os.path.join(_PROJECT_ROOT, "data", "coco", "val2017"),   help="Path to training images")
+    parser.add_argument("--save_dir",   type=str,   default=os.path.join(_PROJECT_ROOT, "outputs", "checkpoints"), help="Directory to save checkpoints")
     parser.add_argument("--resume",     type=str,   default=None,                    help="Path to a .pth checkpoint to resume from")
-    parser.add_argument("--log_dir",    type=str,   default="./outputs/runs",        help="TensorBoard log directory")
+    parser.add_argument("--log_dir",    type=str,   default=os.path.join(_PROJECT_ROOT, "outputs", "runs"),        help="TensorBoard log directory")
     return parser.parse_args()
 
 def train_unet(args):

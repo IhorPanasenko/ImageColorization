@@ -4,11 +4,14 @@ import sys
 import os
 from torchvision import transforms
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+_TEST_DIR     = os.path.dirname(os.path.abspath(__file__))
+_ML_ROOT      = os.path.abspath(os.path.join(_TEST_DIR, '..'))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_ML_ROOT, '..'))
+sys.path.append(_ML_ROOT)
 from src.utils.dataset import ColorizationDataset
 
 # Шлях до реальних даних (або можна створити фейкову картинку для тесту)
-DATA_PATH = "./data/coco/val2017"
+DATA_PATH = os.path.join(_PROJECT_ROOT, "data", "coco", "val2017")
 
 @pytest.mark.skipif(not os.path.exists(DATA_PATH), reason="Датасет COCO не завантажено")
 def test_dataset_loading():

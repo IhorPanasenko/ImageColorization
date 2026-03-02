@@ -39,7 +39,7 @@ class MetricsService:
         self,
         model_type: str,
         checkpoint_path: str,
-        sample_dir: str = 'data/test_samples',
+        sample_dir: str = os.path.join(ROOT, 'data', 'test_samples'),
     ) -> dict[str, Any]:
         """Run all images in *sample_dir* through the model and return averaged metrics.
 

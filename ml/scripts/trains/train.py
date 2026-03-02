@@ -14,10 +14,15 @@ import sys
 import os
 import argparse
 
+# Resolve paths relative to project root (3 levels up from scripts/trains/)
+_SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
+_ML_ROOT      = os.path.abspath(os.path.join(_SCRIPT_DIR, '..', '..'))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_ML_ROOT, '..'))
+
 # Add scripts/trains/ to sys.path so sibling module imports work
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# Add project root so src.* imports work from this location
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+sys.path.insert(0, _SCRIPT_DIR)
+# Add ml/ so src.* imports work from this location
+sys.path.append(_ML_ROOT)
 
 
 def get_args():
@@ -32,9 +37,9 @@ def get_args():
     parser.add_argument("--batch_size", type=int,   default=8,                       help="Batch size")
     parser.add_argument("--lr",         type=float, default=2e-4,                    help="Initial learning rate")
     parser.add_argument("--lambda_l1",  type=float, default=100.0,                   help="L1 loss weight (Stages 3 & 4)")
-    parser.add_argument("--data_path",  type=str,   default="./data/coco/val2017",   help="Path to training images")
-    parser.add_argument("--save_dir",   type=str,   default="./outputs/checkpoints", help="Checkpoint output directory")
-    parser.add_argument("--log_dir",    type=str,   default="./outputs/runs",        help="TensorBoard log directory")
+    parser.add_argument("--data_path",  type=str,   default=os.path.join(_PROJECT_ROOT, "data", "coco", "val2017"),   help="Path to training images")
+    parser.add_argument("--save_dir",   type=str,   default=os.path.join(_PROJECT_ROOT, "outputs", "checkpoints"), help="Checkpoint output directory")
+    parser.add_argument("--log_dir",    type=str,   default=os.path.join(_PROJECT_ROOT, "outputs", "runs"),        help="TensorBoard log directory")
     # Resume flags
     parser.add_argument("--resume",     type=str,   default=None,
                         help="Checkpoint to resume from (Stages 1 & 2)")

@@ -30,6 +30,7 @@ def create_app(dev: bool = False) -> Flask:
     app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
     app.config['UPLOAD_FOLDER'] = os.path.join(ROOT, 'outputs', 'uploads')
     app.config['OUTPUTS_DIR'] = os.path.join(ROOT, 'outputs')
+    app.config['SAMPLE_DIR'] = os.path.join(ROOT, 'data', 'test_samples')
     app.config['ML_PATH'] = ML_PATH
     app.config['DEV_MODE'] = dev
 
