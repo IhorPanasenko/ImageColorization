@@ -28,6 +28,7 @@ def get_args():
     parser.add_argument("--save_dir",   type=str,   default=os.path.join(_PROJECT_ROOT, "outputs", "checkpoints"), help="Directory to save checkpoints")
     parser.add_argument("--resume",     type=str,   default=None,                    help="Path to a .pth checkpoint to resume from")
     parser.add_argument("--log_dir",    type=str,   default=os.path.join(_PROJECT_ROOT, "outputs", "runs"),        help="TensorBoard log directory")
+    parser.add_argument("--patience",   type=int,   default=7,                       help="Early stopping: epochs without improvement before stopping (0 = disabled)")
     return parser.parse_args()
 
 def train_baseline(args):
@@ -53,7 +54,10 @@ def train_baseline(args):
     transform = transforms.Compose([transforms.Resize((256, 256))])
     try:
         dataset = ColorizationDataset(args.data_path, transform=transform)
-        loader  = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+        n_workers = min(4, os.cpu_count() or 1)
+        loader  = DataLoader(dataset, batch_size=args.batch_size, shuffle=True,
+                             num_workers=n_workers, persistent_workers=n_workers > 0,
+                             prefetch_factor=2 if n_workers > 0 else None)
         print(f"Data loaded: {len(dataset)} images")
     except Exception as e:
         print(f"Error loading dataset: {e}")
@@ -82,6 +86,9 @@ def train_baseline(args):
         print(f"Warning: resume checkpoint not found: {args.resume}")
 
     # ── Training loop ──────────────────────────────────────────────────────────
+    best_loss      = float('inf')
+    no_improve     = 0
+
     for epoch in range(start_epoch, args.epochs):
         model.train()
         loop         = tqdm(loader, desc=f"Epoch {epoch+1}/{args.epochs}")
@@ -109,10 +116,27 @@ def train_baseline(args):
             writer.add_scalar("Loss/epoch", avg_loss, epoch)
             writer.add_scalar("LR",         current_lr, epoch)
 
+        # ── Best checkpoint ────────────────────────────────────────────────────
+        if avg_loss < best_loss:
+            best_loss  = avg_loss
+            no_improve = 0
+            best_ckpt  = os.path.join(args.save_dir, "baseline_cnn_best.pth")
+            torch.save(model.state_dict(), best_ckpt)
+            print(f"  ** New best loss {best_loss:.5f} — saved {best_ckpt}")
+        else:
+            no_improve += 1
+            print(f"  No improvement for {no_improve}/{args.patience} epochs")
+
         if (epoch + 1) % 5 == 0:
             ckpt = os.path.join(args.save_dir, f"baseline_cnn_epoch_{epoch+1}.pth")
             torch.save(model.state_dict(), ckpt)
             print(f"  Checkpoint saved: {ckpt}")
+
+        # ── Early stopping ─────────────────────────────────────────────────────
+        if args.patience > 0 and no_improve >= args.patience:
+            print(f"\n  Early stopping triggered after {epoch+1} epochs "
+                  f"(no improvement for {args.patience} consecutive epochs).")
+            break
 
     # ── Final save ─────────────────────────────────────────────────────────────
     final = os.path.join(args.save_dir, "baseline_cnn_final.pth")

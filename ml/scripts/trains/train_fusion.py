@@ -33,6 +33,7 @@ def get_args():
     parser.add_argument("--resume_g",   type=str,   default=None,                     help="Generator checkpoint to resume from")
     parser.add_argument("--resume_d",   type=str,   default=None,                     help="Discriminator checkpoint to resume from")
     parser.add_argument("--log_dir",    type=str,   default=os.path.join(_PROJECT_ROOT, "outputs", "runs"),         help="TensorBoard log directory")
+    parser.add_argument("--save_best_g", action="store_true", default=True,           help="Save best generator checkpoint based on lowest avg G loss")
     return parser.parse_args()
 
 
@@ -69,7 +70,10 @@ def train_fusion(args):
     # ── Data ───────────────────────────────────────────────────────────────────
     transform = transforms.Compose([transforms.Resize((256, 256))])
     dataset   = ColorizationDataset(args.data_path, transform=transform)
-    loader    = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+    n_workers = min(4, os.cpu_count() or 1)
+    loader    = DataLoader(dataset, batch_size=args.batch_size, shuffle=True,
+                           num_workers=n_workers, persistent_workers=n_workers > 0,
+                           prefetch_factor=2 if n_workers > 0 else None)
     print(f"Data loaded: {len(dataset)} images")
 
     # ── Models ─────────────────────────────────────────────────────────────────
@@ -107,6 +111,8 @@ def train_fusion(args):
         print(f"Resumed from epoch {start_epoch}, continuing from epoch {start_epoch + 1}")
 
     # ── Training loop ──────────────────────────────────────────────────────────
+    best_g_loss = float('inf')
+
     for epoch in range(start_epoch, args.epochs):
         net_G.train()
         net_D.train()
@@ -166,6 +172,14 @@ def train_fusion(args):
             torch.save(net_D.state_dict(),
                        os.path.join(args.save_dir, f"fusion_discriminator_epoch_{epoch+1}.pth"))
             print(f"  Checkpoints saved at epoch {epoch+1}")
+
+        # ── Best generator checkpoint ───────────────────────────────────────────
+        avg_g = sum_G / len(loader)
+        if avg_g < best_g_loss:
+            best_g_loss = avg_g
+            best_ckpt   = os.path.join(args.save_dir, "fusion_generator_best.pth")
+            torch.save(net_G.state_dict(), best_ckpt)
+            print(f"  ** New best G loss {best_g_loss:.4f} — saved {best_ckpt}")
 
     # ── Final save ─────────────────────────────────────────────────────────────
     torch.save(net_G.state_dict(), os.path.join(args.save_dir, "fusion_generator_final.pth"))
