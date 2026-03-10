@@ -12,6 +12,7 @@ export const metricsApi = {
     api.post<EvalResult>(
       '/metrics/batch_evaluate',
       { model, checkpoint },
+      { timeout: 180_000 },
     ).then((r) => r.data),
 
   compareModels: (

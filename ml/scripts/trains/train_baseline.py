@@ -15,8 +15,16 @@ _ML_ROOT      = os.path.abspath(os.path.join(_SCRIPT_DIR, '..', '..'))
 _PROJECT_ROOT = os.path.abspath(os.path.join(_ML_ROOT, '..'))
 sys.path.append(_ML_ROOT)
 
+# ── Apple Silicon MPS accelerator settings ─────────────────────────────────
+# Allow MPS ops that aren't natively supported to fall back to CPU silently
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+# Remove 60% unified-memory cap so MPS can use all available GPU memory
+os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
+
 from src.models.baseline_cnn import BaselineCNN
 from src.utils.dataset import ColorizationDataset
+from src.utils.common import lab_to_rgb
+from src.utils.metrics import compute_psnr, compute_ssim
 
 
 def get_args():
@@ -29,6 +37,9 @@ def get_args():
     parser.add_argument("--resume",     type=str,   default=None,                    help="Path to a .pth checkpoint to resume from")
     parser.add_argument("--log_dir",    type=str,   default=os.path.join(_PROJECT_ROOT, "outputs", "runs"),        help="TensorBoard log directory")
     parser.add_argument("--patience",   type=int,   default=7,                       help="Early stopping: epochs without improvement before stopping (0 = disabled)")
+    parser.add_argument("--val_ratio",    type=float, default=0.1,   help="Fraction of data reserved for validation")
+    parser.add_argument("--val_every",    type=int,   default=5,    help="Run validation every N epochs")
+    parser.add_argument("--num_samples",  type=int,   default=None, help="Cap total images used (e.g. 1000). Useful to reduce training time.")
     return parser.parse_args()
 
 def train_baseline(args):
@@ -50,15 +61,27 @@ def train_baseline(args):
     except ImportError:
         writer = None
 
-    # ── Data ───────────────────────────────────────────────────────────────────
-    transform = transforms.Compose([transforms.Resize((256, 256))])
+    # ── Data (with train/val split) ────────────────────────────────────────────
+    transform = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.RandomHorizontalFlip(),
+    ])
+    val_transform = transforms.Compose([transforms.Resize((256, 256))])
     try:
-        dataset = ColorizationDataset(args.data_path, transform=transform)
-        n_workers = min(4, os.cpu_count() or 1)
-        loader  = DataLoader(dataset, batch_size=args.batch_size, shuffle=True,
-                             num_workers=n_workers, persistent_workers=n_workers > 0,
-                             prefetch_factor=2 if n_workers > 0 else None)
-        print(f"Data loaded: {len(dataset)} images")
+        train_dataset = ColorizationDataset(args.data_path, mode='train',
+                                            transform=transform, val_ratio=args.val_ratio,
+                                            num_samples=args.num_samples)
+        val_dataset   = ColorizationDataset(args.data_path, mode='val',
+                                            transform=val_transform, val_ratio=args.val_ratio,
+                                            num_samples=args.num_samples)
+        n_workers = min(8, os.cpu_count() or 1)
+        loader   = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
+                              num_workers=n_workers, persistent_workers=n_workers > 0,
+                              prefetch_factor=2 if n_workers > 0 else None)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False,
+                                num_workers=n_workers, persistent_workers=n_workers > 0,
+                                prefetch_factor=2 if n_workers > 0 else None)
+        print(f"Train: {len(train_dataset)} images | Val: {len(val_dataset)} images")
     except Exception as e:
         print(f"Error loading dataset: {e}")
         return
@@ -98,8 +121,10 @@ def train_baseline(args):
             L  = batch['L'].to(device)
             ab = batch['ab'].to(device)
             optimizer.zero_grad()
-            outputs = model(L)
-            loss    = criterion(outputs, ab)
+            with torch.autocast(device_type=device.type, dtype=torch.float16,
+                                 enabled=(device.type == "mps")):
+                outputs = model(L)
+                loss    = criterion(outputs, ab)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
@@ -116,7 +141,26 @@ def train_baseline(args):
             writer.add_scalar("Loss/epoch", avg_loss, epoch)
             writer.add_scalar("LR",         current_lr, epoch)
 
-        # ── Best checkpoint ────────────────────────────────────────────────────
+        # ── Validation-based best checkpoint ────────────────────────────────────
+        if (epoch + 1) % args.val_every == 0 or epoch == args.epochs - 1:
+            import numpy as np
+            model.eval()
+            val_psnr_list = []
+            with torch.no_grad():
+                for vb in val_loader:
+                    vL  = vb['L'].to(device)
+                    vab = vb['ab'].to(device)
+                    vpred = model(vL)
+                    for i in range(vL.size(0)):
+                        pred_rgb = lab_to_rgb(vL[i], vpred[i])
+                        gt_rgb   = lab_to_rgb(vL[i], vab[i])
+                        val_psnr_list.append(compute_psnr(pred_rgb, gt_rgb))
+            model.train()
+            val_psnr = float(np.mean(val_psnr_list))
+            print(f"  VAL PSNR: {val_psnr:.2f} dB")
+            if writer:
+                writer.add_scalar("Val/PSNR", val_psnr, epoch)
+
         if avg_loss < best_loss:
             best_loss  = avg_loss
             no_improve = 0

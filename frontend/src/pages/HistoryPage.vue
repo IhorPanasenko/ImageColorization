@@ -323,10 +323,12 @@ const MODEL_OPTIONS = [
 ] as const
 
 const MODEL_LABELS: Record<ModelType, string> = {
-  baseline: 'Baseline CNN',
-  unet:     'U-Net',
-  gan:      'Pix2Pix GAN',
-  fusion:   'Fusion GAN',
+  baseline:        'Baseline CNN',
+  unet:            'U-Net',
+  gan:             'Pix2Pix GAN',
+  fusion:          'Fusion GAN',
+  classical_welsh: 'Welsh 2002',
+  classical_levin: 'Levin 2004',
 }
 
 const C = {

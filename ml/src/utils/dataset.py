@@ -7,16 +7,43 @@ from torchvision import transforms
 from PIL import Image
 
 class ColorizationDataset(Dataset):
-    def __init__(self, root_dir, mode='train', transform=None):
+    def __init__(self, root_dir, mode='train', transform=None, val_ratio=0.1, seed=42,
+                 num_samples=None):
         """
-        root_dir: path to folder with images (e.g. COCO val2017)
-        mode: 'train' or 'val'
+        root_dir:    path to folder with images (e.g. COCO val2017)
+        mode:        'train', 'val', or 'all' (no split — legacy behaviour)
+        transform:   torchvision transforms applied to PIL image before Lab conversion
+        val_ratio:   fraction of images reserved for validation (default 10%)
+        seed:        random seed for reproducible train/val split
+        num_samples: if set, cap the total dataset to this many images before splitting.
+                     Useful for fast iteration / reducing training time.
         """
         self.root_dir = root_dir
         self.mode = mode
         self.transform = transform
-        self.image_paths = [os.path.join(root_dir, x) for x in os.listdir(root_dir)
-                            if x.lower().endswith(('.png', '.jpg', '.jpeg'))]
+
+        all_images = sorted([
+            os.path.join(root_dir, x) for x in os.listdir(root_dir)
+            if x.lower().endswith(('.png', '.jpg', '.jpeg'))
+        ])
+
+        # Optionally limit total pool (deterministic: first N after sorted)
+        if num_samples is not None and num_samples < len(all_images):
+            all_images = all_images[:num_samples]
+
+        if mode == 'all':
+            self.image_paths = all_images
+        else:
+            # Deterministic split so train and val never overlap
+            rng = np.random.RandomState(seed)
+            indices = rng.permutation(len(all_images))
+            n_val = max(1, int(len(all_images) * val_ratio))
+            val_idx = set(indices[:n_val].tolist())
+            if mode == 'val':
+                self.image_paths = [all_images[i] for i in sorted(val_idx)]
+            else:  # 'train'
+                self.image_paths = [all_images[i] for i in range(len(all_images))
+                                    if i not in val_idx]
 
     def __len__(self):
         return len(self.image_paths)

@@ -18,6 +18,8 @@ def discover_checkpoints(outputs_dir: str) -> list[dict[str, Any]]:
     results = []
     for p in paths:
         name = os.path.basename(p)
+        if _is_discriminator_checkpoint(name):
+            continue
         results.append({
             'path': p,
             'filename': name,
@@ -25,6 +27,11 @@ def discover_checkpoints(outputs_dir: str) -> list[dict[str, Any]]:
             'model_hint': _guess_model(name),
         })
     return results
+
+
+def _is_discriminator_checkpoint(filename: str) -> bool:
+    fn = filename.lower()
+    return 'discriminator' in fn
 
 
 def _guess_model(filename: str) -> str:

@@ -37,6 +37,8 @@ def get_args():
     parser.add_argument("--batch_size", type=int,   default=8,                       help="Batch size")
     parser.add_argument("--lr",         type=float, default=2e-4,                    help="Initial learning rate")
     parser.add_argument("--lambda_l1",  type=float, default=100.0,                   help="L1 loss weight (Stages 3 & 4)")
+    parser.add_argument("--lambda_perceptual", type=float, default=10.0,            help="VGG perceptual loss weight (Stages 3 & 4, 0 = disable)")
+    parser.add_argument("--label_smoothing",   type=float, default=0.1,             help="Discriminator label smoothing (Stages 3 & 4)")
     parser.add_argument("--data_path",  type=str,   default=os.path.join(_PROJECT_ROOT, "data", "coco", "val2017"),   help="Path to training images")
     parser.add_argument("--save_dir",   type=str,   default=os.path.join(_PROJECT_ROOT, "outputs", "checkpoints"), help="Checkpoint output directory")
     parser.add_argument("--log_dir",    type=str,   default=os.path.join(_PROJECT_ROOT, "outputs", "runs"),        help="TensorBoard log directory")
@@ -47,6 +49,12 @@ def get_args():
                         help="Generator checkpoint to resume from (Stages 3 & 4)")
     parser.add_argument("--resume_d",   type=str,   default=None,
                         help="Discriminator checkpoint to resume from (Stages 3 & 4)")
+    parser.add_argument("--warmstart_g", type=str,  default=None,
+                        help="Pretrained checkpoint to warm-start generator (Stages 3 & 4)")
+    # Validation
+    parser.add_argument("--val_ratio",   type=float, default=0.1,   help="Fraction of data for validation")
+    parser.add_argument("--val_every",   type=int,   default=5,     help="Validate every N epochs")
+    parser.add_argument("--num_samples", type=int,   default=None,  help="Cap total images used (e.g. 1000). Useful to reduce training time.")
     return parser.parse_args()
 
 

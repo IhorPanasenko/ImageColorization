@@ -23,15 +23,21 @@
         :disabled="loading"
         @change="$emit('update:model', ($event.target as HTMLSelectElement).value as ModelType)"
       >
-        <option value="baseline">Baseline CNN</option>
-        <option value="unet">U-Net</option>
-        <option value="gan">Pix2Pix GAN</option>
-        <option value="fusion">Fusion GAN</option>
+        <optgroup label="Deep Learning">
+          <option value="baseline">Baseline CNN</option>
+          <option value="unet">U-Net</option>
+          <option value="gan">Pix2Pix GAN</option>
+          <option value="fusion">Fusion GAN</option>
+        </optgroup>
+        <optgroup label="Classical Algorithms">
+          <option value="classical_welsh">Welsh 2002 — Colour Transfer</option>
+          <option value="classical_levin">Levin 2004 — Optimisation</option>
+        </optgroup>
       </select>
     </div>
 
-    <!-- Checkpoint -->
-    <div>
+    <!-- Checkpoint (hidden for classical algorithms) -->
+    <div v-if="!isClassical">
       <label class="label">{{ checkpointLabel }}</label>
       <select
         :value="checkpoint"
@@ -58,6 +64,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ModelType, CheckpointInfo } from '@/types'
+import { CLASSICAL_MODEL_IDS } from '@/types'
 
 const props = withDefaults(
   defineProps<{
@@ -83,6 +90,9 @@ defineEmits<{
   'update:model':      [v: ModelType]
   'update:checkpoint': [v: string]
 }>()
+
+/** True when the selected model is a classical algorithm that needs no checkpoint. */
+const isClassical = computed(() => CLASSICAL_MODEL_IDS.has(props.model))
 
 /** Filter checkpoints to those whose filename hints at the selected model. */
 const filteredCheckpoints = computed<CheckpointInfo[]>(() => {

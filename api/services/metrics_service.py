@@ -15,6 +15,11 @@ if ML_PATH not in sys.path:
 class MetricsService:
     """Wraps metric computation, single image evaluation and model comparison."""
 
+    def __init__(self) -> None:
+        from api.services.colorizer import Colorizer
+        # Reuse a single colorizer to keep models cached across requests.
+        self._colorizer = Colorizer()
+
     def evaluate_single(
         self,
         image_path: str,
@@ -26,9 +31,12 @@ class MetricsService:
         Delegates colorization to Colorizer to avoid code duplication.
         The colorizer already computes all three metrics against the GT.
         """
-        from api.services.colorizer import Colorizer
-        colorizer = Colorizer()
-        result = colorizer.colorize(image_path, model_type, checkpoint_path)
+        result = self._colorizer.colorize(
+            image_path,
+            model_type,
+            checkpoint_path,
+            mode='color_photo',
+        )
         return {
             'model': model_type,
             'checkpoint': checkpoint_path,
@@ -53,9 +61,6 @@ class MetricsService:
             }
         """
         import glob
-        from api.services.colorizer import Colorizer
-        colorizer = Colorizer()
-
         exts = ('*.jpg', '*.jpeg', '*.png', '*.bmp', '*.webp')
         images = []
         for ext in exts:
@@ -64,7 +69,12 @@ class MetricsService:
         per_image = []
         for img_path in sorted(images):
             try:
-                result = colorizer.colorize(img_path, model_type, checkpoint_path)
+                result = self._colorizer.colorize(
+                    img_path,
+                    model_type,
+                    checkpoint_path,
+                    mode='color_photo',
+                )
                 metrics = result.get('metrics', {})
                 per_image.append({
                     'filename': os.path.basename(img_path),
@@ -78,10 +88,13 @@ class MetricsService:
                     'error': str(exc),
                 })
 
-        valid = [r for r in per_image if r.get('psnr') is not None]
-        avg_psnr  = sum(r['psnr']  for r in valid) / len(valid) if valid else None
-        avg_ssim  = sum(r['ssim']  for r in valid) / len(valid) if valid else None
-        avg_lpips = sum(r['lpips'] for r in valid) / len(valid) if valid else None
+        valid_psnr = [r['psnr'] for r in per_image if r.get('psnr') is not None]
+        valid_ssim = [r['ssim'] for r in per_image if r.get('ssim') is not None]
+        valid_lpips = [r['lpips'] for r in per_image if r.get('lpips') is not None]
+
+        avg_psnr = sum(valid_psnr) / len(valid_psnr) if valid_psnr else None
+        avg_ssim = sum(valid_ssim) / len(valid_ssim) if valid_ssim else None
+        avg_lpips = sum(valid_lpips) / len(valid_lpips) if valid_lpips else None
 
         return {
             'model': model_type,
@@ -107,15 +120,14 @@ class MetricsService:
         Returns:
             List of result dicts, one per model config.
         """
-        from api.services.colorizer import Colorizer
-        colorizer = Colorizer()
         results = []
         for cfg in model_configs:
             try:
-                result = colorizer.colorize(
+                result = self._colorizer.colorize(
                     image_path,
                     cfg.get('model', 'unet'),
                     cfg.get('checkpoint', ''),
+                    mode='color_photo',
                 )
                 results.append({
                     'label': cfg.get('label', cfg.get('model', '?')),

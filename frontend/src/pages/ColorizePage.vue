@@ -52,6 +52,27 @@
       />
     </div>
 
+    <!-- ── Reference image (classical models only) ──────────────────────────── -->
+    <transition name="fade">
+      <div v-if="isClassical" class="card space-y-4">
+        <div class="flex items-center gap-2">
+          <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Reference Colour Image</h2>
+          <span class="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full">
+            Required for classical algorithms
+          </span>
+        </div>
+        <p class="text-xs text-gray-500 dark:text-gray-400">
+          Upload a colour photo whose palette will be transferred to your greyscale input.
+        </p>
+        <ImageDropzone
+          :file="referenceFile"
+          :preview-max-height="200"
+          @file-selected="onReferenceSelected"
+          @file-cleared="onReferenceCleared"
+        />
+      </div>
+    </transition>
+
     <!-- ── Upload + Action ───────────────────────────────────────────────────── -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <!-- Drop zone -->
@@ -94,9 +115,13 @@
           </div>
 
           <!-- Validation hints -->
-          <p v-if="!config.checkpoint && !loadingMeta" class="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+          <p v-if="!isClassical && !config.checkpoint && !loadingMeta" class="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
             <AlertCircle class="w-3.5 h-3.5" />
             Select a checkpoint first.
+          </p>
+          <p v-if="isClassical && !referenceFile" class="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+            <AlertCircle class="w-3.5 h-3.5" />
+            Upload a reference colour image above.
           </p>
         </div>
 
@@ -185,6 +210,7 @@ import ModelSelector from '@/components/ModelSelector.vue'
 import { inferenceApi } from '@/api/inference'
 import { modelsApi }    from '@/api/models'
 import type { ColorizeResult, CheckpointInfo, ModelType, ColorizeMode } from '@/types'
+import { CLASSICAL_MODEL_IDS } from '@/types'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const modeOptions = [
@@ -203,10 +229,11 @@ const modeOptions = [
 // ── State ──────────────────────────────────────────────────────────────────────
 const checkpoints  = ref<CheckpointInfo[]>([])
 const loadingMeta  = ref(true)
-const loading      = ref(false)
-const error        = ref<string | null>(null)
-const selectedFile = ref<File | null>(null)
-const result       = ref<ColorizeResult | null>(null)
+const loading       = ref(false)
+const error         = ref<string | null>(null)
+const selectedFile  = ref<File | null>(null)
+const referenceFile = ref<File | null>(null)
+const result        = ref<ColorizeResult | null>(null)
 
 const config = reactive({
   model:      'unet' as ModelType,
@@ -217,9 +244,13 @@ const config = reactive({
 const toast = useToast()
 
 // ── Derived ────────────────────────────────────────────────────────────────────
-const canColorize = computed(
-  () => selectedFile.value !== null && config.checkpoint !== '',
-)
+const isClassical = computed(() => CLASSICAL_MODEL_IDS.has(config.model))
+
+const canColorize = computed(() => {
+  if (!selectedFile.value) return false
+  if (isClassical.value) return referenceFile.value !== null
+  return config.checkpoint !== ''
+})
 
 /**
  * Build the panels array for ImageCompare based on mode.
@@ -275,6 +306,14 @@ function onFileCleared() {
   error.value  = null
 }
 
+function onReferenceSelected(file: File) {
+  referenceFile.value = file
+}
+
+function onReferenceCleared() {
+  referenceFile.value = null
+}
+
 async function runColorize() {
   if (!selectedFile.value) return
   loading.value = true
@@ -287,6 +326,7 @@ async function runColorize() {
       config.model,
       config.checkpoint,
       config.mode,
+      referenceFile.value ?? undefined,
     )
     toast.success('Colorization complete!')
   } catch (err: unknown) {

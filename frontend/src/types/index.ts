@@ -1,6 +1,18 @@
 // ─── Training ────────────────────────────────────────────────────────────────
 
-export type ModelType = 'baseline' | 'unet' | 'gan' | 'fusion'
+export type ModelType =
+  | 'baseline'
+  | 'unet'
+  | 'gan'
+  | 'fusion'
+  | 'classical_welsh'
+  | 'classical_levin'
+
+/** Classical method IDs — these require a reference image, not a checkpoint. */
+export const CLASSICAL_MODEL_IDS: ReadonlySet<ModelType> = new Set<ModelType>([
+  'classical_welsh',
+  'classical_levin',
+])
 
 export interface TrainingParams {
   model: ModelType
@@ -48,10 +60,11 @@ export interface ColorizeResult {
   colorized: string    // base64 PNG
   grayscale: string    // base64 PNG
   original: string     // base64 PNG
-  ground_truth?: string
+  ground_truth?: string // base64 PNG (only present in color_photo mode)
   metrics: {
     psnr: number | null
     ssim: number | null
+    lpips?: number | null
   }
 }
 
@@ -86,4 +99,6 @@ export interface ModelInfo {
   id: ModelType
   name: string
   description: string
+  /** True when the algorithm is classical and needs a reference image instead of a checkpoint. */
+  classical?: boolean
 }

@@ -24,7 +24,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='Image Colorization Ensemble — web server')
     parser.add_argument('--dev',  action='store_true', help='Enable CORS for Vite dev server on :5173')
     parser.add_argument('--host', default='0.0.0.0', help='Bind host (default: 0.0.0.0)')
-    parser.add_argument('--port', type=int, default=5000, help='Bind port (default: 5000)')
+    parser.add_argument('--port', type=int, default=8000, help='Bind port (default: 8000)')
     parser.add_argument('--debug', action='store_true', help='Enable Flask debug mode')
     args = parser.parse_args()
 

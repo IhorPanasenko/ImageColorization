@@ -4,6 +4,7 @@ Reusable loss functions shared across GAN and Fusion training scripts.
 
 import torch
 import torch.nn as nn
+from torchvision import models
 
 
 class GANLoss(nn.Module):
@@ -13,11 +14,16 @@ class GANLoss(nn.Module):
     Dynamically creates real/fake label tensors that match the discriminator's
     output shape and device automatically, so it works with any output spatial
     resolution on any device (CPU, CUDA, MPS) without manual device tracking.
+
+    Args:
+        label_smoothing: If > 0, real labels become (1 - label_smoothing)
+                         to prevent the discriminator from becoming
+                         over-confident.  Standard value: 0.1.
     """
-    def __init__(self):
+    def __init__(self, label_smoothing: float = 0.0):
         super().__init__()
         self.loss = nn.BCEWithLogitsLoss()
-        self.real_label = 1.0
+        self.real_label = 1.0 - label_smoothing
         self.fake_label = 0.0
 
     def get_target_tensor(self, prediction: torch.Tensor, target_is_real: bool) -> torch.Tensor:
@@ -28,3 +34,67 @@ class GANLoss(nn.Module):
     def forward(self, prediction: torch.Tensor, target_is_real: bool) -> torch.Tensor:
         target_tensor = self.get_target_tensor(prediction, target_is_real)
         return self.loss(prediction, target_tensor)
+
+
+class PerceptualLoss(nn.Module):
+    """
+    VGG-16 based perceptual loss (feature matching loss).
+
+    Compares activations at selected VGG layers between predicted and
+    target images.  This bridges pixel-level accuracy (L1) and perceptual
+    quality — critical for GAN-based colorization where L1 alone causes
+    desaturated colors and pure GAN loss causes instability.
+
+    The input to this loss should be 3-channel RGB-ish tensors in [0, 1].
+    Since our models output 2-channel Lab *ab*, callers must convert to
+    a pseudo-RGB representation first (see helper ``ab_to_pseudo_rgb``).
+    """
+
+    def __init__(self, layer_ids: tuple[int, ...] = (3, 8, 15, 22)):
+        super().__init__()
+        vgg = models.vgg16(weights=models.VGG16_Weights.DEFAULT).features
+        self.slices = nn.ModuleList()
+        prev = 0
+        for lid in layer_ids:
+            self.slices.append(nn.Sequential(*list(vgg.children())[prev:lid + 1]))
+            prev = lid + 1
+        # Freeze all VGG weights
+        for p in self.parameters():
+            p.requires_grad = False
+        self.criterion = nn.L1Loss()
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            pred:   (B, 3, H, W) predicted pseudo-RGB in [0, 1].
+            target: (B, 3, H, W) ground-truth pseudo-RGB in [0, 1].
+        Returns:
+            Scalar perceptual loss (sum over selected layers).
+        """
+        loss = torch.tensor(0.0, device=pred.device)
+        x, y = pred, target
+        for s in self.slices:
+            x = s(x)
+            with torch.no_grad():
+                y = s(y)
+            loss = loss + self.criterion(x, y)
+        return loss
+
+
+def ab_to_pseudo_rgb(L: torch.Tensor, ab: torch.Tensor) -> torch.Tensor:
+    """
+    Approximate Lab→RGB conversion *on the GPU* for perceptual loss.
+
+    This creates a 3-channel tensor by stacking the L channel with the ab
+    channels, normalized to roughly [0, 1].  It is NOT a true Lab→sRGB
+    conversion (that requires non-differentiable clipping), but it gives
+    VGG features that are correlated with color perception.
+
+    Args:
+        L:  (B, 1, H, W) in [0, 1].
+        ab: (B, 2, H, W) in [-1, 1].
+    Returns:
+        (B, 3, H, W) pseudo-RGB in approximately [0, 1].
+    """
+    ab_scaled = (ab + 1.0) / 2.0  # [-1,1] -> [0,1]
+    return torch.cat([L, ab_scaled], dim=1)  # (B, 3, H, W)

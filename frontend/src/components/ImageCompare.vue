@@ -20,7 +20,7 @@
         <img
           :src="panel.src"
           :alt="panel.label"
-          class="w-full object-cover"
+          class="w-full object-contain bg-gray-50 dark:bg-gray-900"
           :style="{ maxHeight: `${maxHeight}px` }"
           loading="lazy"
         />

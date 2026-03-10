@@ -272,10 +272,12 @@ function inferModel(filename: string): string {
 
 function modelDisplayName(model: ModelType): string {
   const map: Record<ModelType, string> = {
-    baseline: 'Baseline CNN',
-    unet:     'U-Net',
-    gan:      'Pix2Pix GAN',
-    fusion:   'Fusion GAN',
+    baseline:        'Baseline CNN',
+    unet:            'U-Net',
+    gan:             'Pix2Pix GAN',
+    fusion:          'Fusion GAN',
+    classical_welsh: 'Welsh 2002',
+    classical_levin: 'Levin 2004',
   }
   return map[model] ?? model
 }

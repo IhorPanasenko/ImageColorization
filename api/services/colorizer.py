@@ -22,6 +22,11 @@ if ML_PATH not in sys.path:
     sys.path.insert(0, ML_PATH)
 
 _MAX_CACHE = 4
+_RESAMPLE = (
+    Image.Resampling.BICUBIC
+    if hasattr(Image, "Resampling")
+    else getattr(Image, "BICUBIC", 3)
+)
 
 
 def _img_to_b64(arr: np.ndarray) -> str:
@@ -31,6 +36,13 @@ def _img_to_b64(arr: np.ndarray) -> str:
     buf = BytesIO()
     img.save(buf, format='PNG')
     return base64.b64encode(buf.getvalue()).decode()
+
+
+def _resize_rgb(arr: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    """Resize a float32 RGB image (0-1 range) to the given (width, height)."""
+    uint8 = (arr.clip(0, 1) * 255).astype(np.uint8)
+    img = Image.fromarray(uint8).resize(size, _RESAMPLE)
+    return (np.array(img).astype(np.float32) / 255.0)
 
 
 class Colorizer:
@@ -62,24 +74,24 @@ class Colorizer:
             image_path: Path to source image.
             model_type: One of "baseline", "unet", "gan", "fusion".
             checkpoint_path: Path to the .pth checkpoint file.
-            mode: "grayscale" (input is already B&W / the L channel is extracted)
-                  or "color_photo" (input is a color photo that gets re-colorized;
-                  the original color is retained as 'original' in the response).
+            mode: "grayscale" (input is B&W, no ground truth for metrics)
+                  or "color_photo" (input is color, compute metrics vs original).
 
         Returns:
             Dict with keys:
                 "colorized"    — base64 PNG of the predicted color image
                 "grayscale"    — base64 PNG of the L-only (grayscale) input
                 "original"     — base64 PNG of the source file as uploaded
-                "ground_truth" — base64 PNG of GT (only when GT is available)
-                "metrics"      — {"psnr", "ssim", "lpips"}  (null when no GT)
+                "ground_truth" — base64 PNG of GT (only in color_photo mode)
+                "metrics"      — {"psnr", "ssim", "lpips"} (only in color_photo mode)
         """
         import torch
         # All image-processing helpers live in src.utils.common
-        from src.utils.common import prepare_grayscale_input, lab_to_rgb
+        from src.utils.common import get_device, prepare_grayscale_input, lab_to_rgb
         from src.utils.metrics import compute_psnr, compute_ssim, compute_lpips
 
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # Prefer MPS (Apple Silicon), then CUDA, else CPU
+        device = get_device()
         model, hint_net = self._load_model(model_type, checkpoint_path, device)
 
         # Original image for display (before any conversion)
@@ -87,7 +99,11 @@ class Colorizer:
         original_np = np.array(img_pil).astype(np.float32) / 255.0
 
         # prepare_grayscale_input returns (L_tensor (1,1,H,W), gt_rgb (H,W,3))
-        L_tensor, gt_rgb = prepare_grayscale_input(image_path, target_size=256)
+        L_tensor, gt_rgb, meta = prepare_grayscale_input(
+            image_path,
+            target_size=256,
+            return_meta=True,
+        )
         L_tensor = L_tensor.to(device)
 
         with torch.no_grad():
@@ -103,24 +119,40 @@ class Colorizer:
         L_np = L_tensor[0].cpu().squeeze().numpy()        # (H, W) in [0, 1]
         gray_rgb = np.stack([L_np] * 3, axis=2)           # (H, W, 3)
 
+        # Recover original aspect ratio if padding was applied
+        pad_left = meta['pad_left']
+        pad_top = meta['pad_top']
+        resized_w = meta['resized_w']
+        resized_h = meta['resized_h']
+        orig_w = meta['orig_w']
+        orig_h = meta['orig_h']
+
+        pred_crop = pred_rgb[pad_top:pad_top + resized_h, pad_left:pad_left + resized_w]
+        gray_crop = gray_rgb[pad_top:pad_top + resized_h, pad_left:pad_left + resized_w]
+        gt_crop = gt_rgb[pad_top:pad_top + resized_h, pad_left:pad_left + resized_w]
+
+        pred_disp = _resize_rgb(pred_crop, (orig_w, orig_h))
+        gray_disp = _resize_rgb(gray_crop, (orig_w, orig_h))
+
         result: dict[str, Any] = {
-            'colorized': _img_to_b64(pred_rgb),
-            'grayscale': _img_to_b64(gray_rgb),
+            'colorized': _img_to_b64(pred_disp),
+            'grayscale': _img_to_b64(gray_disp),
             'original':  _img_to_b64(original_np),
             'metrics':   {'psnr': None, 'ssim': None, 'lpips': None},
         }
 
-        # Compute metrics vs ground truth when GT is available
-        # (gt_rgb is the original color image, always available since we load RGB)
-        try:
-            result['ground_truth'] = _img_to_b64(gt_rgb)
-            result['metrics']['psnr']  = float(compute_psnr(pred_rgb, gt_rgb))
-            result['metrics']['ssim']  = float(compute_ssim(pred_rgb, gt_rgb))
-            result['metrics']['lpips'] = float(
-                compute_lpips(pred_rgb, gt_rgb, device=str(device))
-            )
-        except Exception:
-            pass
+        # Compute metrics only in color_photo mode
+        # (grayscale mode has no ground truth, metrics would be meaningless)
+        if mode == 'color_photo':
+            try:
+                result['ground_truth'] = _img_to_b64(_resize_rgb(gt_crop, (orig_w, orig_h)))
+                result['metrics']['psnr']  = float(compute_psnr(pred_crop, gt_crop))
+                result['metrics']['ssim']  = float(compute_ssim(pred_crop, gt_crop))
+                result['metrics']['lpips'] = float(
+                    compute_lpips(pred_crop, gt_crop, device=str(device))
+                )
+            except Exception:
+                pass
 
         return result
 
@@ -146,7 +178,6 @@ class Colorizer:
             import torch
             checkpoint = torch.load(checkpoint_path, map_location=device)
             state = checkpoint.get('model_state_dict', checkpoint)
-            model.load_state_dict(state)
             model.load_state_dict(state)
 
         model.to(device).eval()

@@ -14,7 +14,13 @@ from skimage import color
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend — safe for scripts
 import matplotlib.pyplot as plt
-from torchvision import transforms
+from typing import Union
+
+_RESAMPLE = (
+    Image.Resampling.BICUBIC
+    if hasattr(Image, "Resampling")
+    else getattr(Image, "BICUBIC", 3)
+)
 
 
 def get_device() -> torch.device:
@@ -47,6 +53,12 @@ def lab_to_rgb(L: torch.Tensor, ab: torch.Tensor) -> np.ndarray:
     L_np = L_np * 100.0                                # [0, 1]   -> [0, 100]
     ab_np = ab_np * 128.0                              # [-1, 1]  -> [-128, 128]
 
+    # Clamp ab to the valid CIE-Lab range to prevent impossible sRGB colors.
+    # Without clamping, GAN outputs occasionally exceed Lab gamut limits,
+    # producing negative XYZ values that get hard-clipped by lab2rgb and
+    # degrade both visual quality and PSNR/SSIM.
+    ab_np = np.clip(ab_np, -128.0, 127.0)
+
     # Assemble Lab image: (H, W, 3)
     ab_np = ab_np.transpose(1, 2, 0)                   # (H, W, 2)
     lab = np.concatenate([L_np[:, :, np.newaxis], ab_np], axis=2).astype(np.float32)
@@ -58,7 +70,11 @@ def lab_to_rgb(L: torch.Tensor, ab: torch.Tensor) -> np.ndarray:
 def prepare_grayscale_input(
     img_path: str,
     target_size: int = 256,
-) -> tuple[torch.Tensor, np.ndarray]:
+    return_meta: bool = False,
+) -> Union[
+    tuple[torch.Tensor, np.ndarray],
+    tuple[torch.Tensor, np.ndarray, dict[str, int]],
+]:
     """
     Load an image, extract and normalize the L channel for model input,
     and return the ground-truth RGB for comparison.
@@ -70,18 +86,45 @@ def prepare_grayscale_input(
     Returns:
         L_tensor:     Float tensor of shape (1, 1, H, W), L channel in [0, 1].
         original_rgb: Ground-truth RGB as float32 numpy (H, W, 3) in [0, 1].
+        meta (opt):   Resize/pad metadata for aspect-ratio recovery.
     """
     img = Image.open(img_path).convert("RGB")
-    transform = transforms.Resize((target_size, target_size))
-    img = transform(img)
+    orig_w, orig_h = img.size
 
-    img_np = np.array(img)
+    scale = target_size / max(orig_w, orig_h)
+    resized_w = max(1, int(round(orig_w * scale)))
+    resized_h = max(1, int(round(orig_h * scale)))
+    img_resized = img.resize((resized_w, resized_h), _RESAMPLE)
+
+    pad_left = (target_size - resized_w) // 2
+    pad_top = (target_size - resized_h) // 2
+    pad_right = target_size - resized_w - pad_left
+    pad_bottom = target_size - resized_h - pad_top
+
+    img_padded = Image.new("RGB", (target_size, target_size), (0, 0, 0))
+    img_padded.paste(img_resized, (pad_left, pad_top))
+
+    img_np = np.array(img_padded)
     lab = color.rgb2lab(img_np).astype(np.float32)
 
     L = lab[:, :, 0] / 100.0                           # (H, W) in [0, 1]
     L_tensor = torch.from_numpy(L).unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
 
     original_rgb = (img_np / 255.0).astype(np.float32) # (H, W, 3) in [0, 1]
+
+    if return_meta:
+        meta = {
+            "orig_w": orig_w,
+            "orig_h": orig_h,
+            "resized_w": resized_w,
+            "resized_h": resized_h,
+            "pad_left": pad_left,
+            "pad_top": pad_top,
+            "pad_right": pad_right,
+            "pad_bottom": pad_bottom,
+        }
+        return L_tensor, original_rgb, meta
+
     return L_tensor, original_rgb
 
 
