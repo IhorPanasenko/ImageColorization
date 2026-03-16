@@ -9,6 +9,26 @@
     <!-- Setup card -->
     <div class="card space-y-5">
       <div>
+        <!-- Mode toggle -->
+        <label class="label mb-1">Input Mode</label>
+        <div class="flex gap-2 mb-4">
+          <label
+            v-for="opt in modeOptions"
+            :key="opt.value"
+            :class="[
+              'flex-1 flex items-start gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer transition-colors text-sm',
+              compareMode === opt.value
+                ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/20 font-medium'
+                : 'border-gray-200 dark:border-gray-700 hover:border-brand-300',
+            ]"
+          >
+            <input type="radio" :value="opt.value" v-model="compareMode" class="mt-0.5 accent-brand-500" :disabled="loading" />
+            <div>
+              <p class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ opt.label }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ opt.hint }}</p>
+            </div>
+          </label>
+        </div>
         <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Reference Image</h2>
         <ImageDropzone
           :file="sourceFile"
@@ -105,6 +125,11 @@
           </div>
         </div>
 
+        <div class="card space-y-3">
+          <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Rankings</h2>
+          <RankingTable :rows="rankingRows" />
+        </div>
+
         <div class="grid gap-5" :class="gridClass">
           <div v-for="(r, i) in results" :key="i" class="card space-y-3">
             <div class="flex items-center justify-between">
@@ -134,7 +159,9 @@
             <MetricsCards
               :psnr="r.result.metrics.psnr"
               :ssim="r.result.metrics.ssim"
-              :columns="2"
+              :lpips="r.result.metrics.lpips"
+              :inference-time-ms="r.result.metrics.inference_time_ms"
+              :columns="4"
             />
           </div>
         </div>
@@ -166,15 +193,30 @@ import MetricsCards  from '@/components/MetricsCards.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
 import StatusBadge   from '@/components/StatusBadge.vue'
 import RadarChart    from '@/components/RadarChart.vue'
+import RankingTable  from '@/components/RankingTable.vue'
 import type { RadarSlot } from '@/components/RadarChart.vue'
+import type { RankingRow } from '@/components/RankingTable.vue'
 
 import { inferenceApi } from '@/api/inference'
 import { modelsApi }    from '@/api/models'
-import type { ColorizeResult, CheckpointInfo, ModelType } from '@/types'
+import type { ColorizeResult, CheckpointInfo, ModelType, ColorizeMode } from '@/types'
 
 const MIN_SLOTS   = 1
 const MAX_SLOTS   = 4
 const SLOT_COLORS = ['#4f6ef7', '#10b981', '#f59e0b', '#ef4444']
+
+const modeOptions = [
+  {
+    value: 'grayscale' as ColorizeMode,
+    label: 'Grayscale → Colour',
+    hint: 'No ground truth — inference time always shown; PSNR/SSIM/LPIPS unavailable.',
+  },
+  {
+    value: 'color_photo' as ColorizeMode,
+    label: 'Colour → Re-colour',
+    hint: 'Upload a colour photo. L channel is re-coloured and all metrics are computed against the original.',
+  },
+]
 
 interface Slot {
   label:      string
@@ -196,6 +238,7 @@ const doneCount      = ref(0)
 const error          = ref<string | null>(null)
 const sourceFile     = ref<File | null>(null)
 const results        = ref<CompareResult[]>([])
+const compareMode    = ref<ColorizeMode>('grayscale')
 
 const slots = reactive<Slot[]>([
   { label: 'Baseline', model: 'baseline', checkpoint: '' },
@@ -218,10 +261,24 @@ const gridClass = computed(() => {
 
 const radarSlots = computed((): RadarSlot[] =>
   results.value.map((r, i) => ({
-    label: r.label,
-    psnr:  r.result.metrics.psnr,
-    ssim:  r.result.metrics.ssim,
-    color: SLOT_COLORS[i],
+    label:         r.label,
+    psnr:          r.result.metrics.psnr,
+    ssim:          r.result.metrics.ssim,
+    lpips:         r.result.metrics.lpips ?? null,
+    inferenceTime: r.result.metrics.inference_time_ms ?? null,
+    color:         SLOT_COLORS[i],
+  })),
+)
+
+const rankingRows = computed((): RankingRow[] =>
+  results.value.map((r, i) => ({
+    label:           r.label,
+    model:           r.model as string,
+    color:           SLOT_COLORS[i],
+    psnr:            r.result.metrics.psnr,
+    ssim:            r.result.metrics.ssim,
+    lpips:           r.result.metrics.lpips ?? null,
+    inferenceTimeMs: r.result.metrics.inference_time_ms ?? null,
   })),
 )
 
@@ -273,7 +330,7 @@ async function runComparison() {
           sourceFile.value!,
           s.model,
           s.checkpoint,
-          'grayscale',
+          compareMode.value,
         )
         doneCount.value++
         return { label: s.label, model: s.model, result: r, isWinner: false }
@@ -297,7 +354,11 @@ async function runComparison() {
       let bestScore = -Infinity
       let bestIdx   = 0
       fulfilled.forEach((r, i) => {
-        const score = 0.5 * ((r.result.metrics.psnr ?? 0) / 40) + 0.5 * (r.result.metrics.ssim ?? 0)
+        // Composite score matching RankingTable weights: 0.20 PSNR + 0.35 SSIM + 0.35 (1−LPIPS) + 0.10 speed
+        const psnrNorm  = Math.min((r.result.metrics.psnr  ?? 0) / 40, 1)
+        const ssimNorm  = Math.max(0, Math.min(r.result.metrics.ssim  ?? 0, 1))
+        const lpipsNorm = Math.max(0, 1 - (r.result.metrics.lpips ?? 1))
+        const score = 0.20 * psnrNorm + 0.35 * ssimNorm + 0.35 * lpipsNorm
         if (score > bestScore) { bestScore = score; bestIdx = i }
       })
       fulfilled[bestIdx].isWinner = true

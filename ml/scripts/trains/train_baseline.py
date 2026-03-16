@@ -88,7 +88,7 @@ def train_baseline(args):
 
     # ── Model, loss, optimizer ─────────────────────────────────────────────────
     model     = BaselineCNN().to(device)
-    criterion = nn.MSELoss()
+    criterion = nn.L1Loss()  # L1 produces more saturated colours than MSE (avoids grey regression)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     # Step-decay LR: halve twice over the full training run
     scheduler = optim.lr_scheduler.StepLR(

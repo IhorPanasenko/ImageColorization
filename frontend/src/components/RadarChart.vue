@@ -29,11 +29,12 @@ const isDark = computed(() =>
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 export interface RadarSlot {
-  label:  string
-  psnr:   number | null
-  ssim:   number | null
-  lpips?: number | null   // optional; lower is better; inverted for display
-  color:  string
+  label:          string
+  psnr:           number | null
+  ssim:           number | null
+  lpips?:         number | null   // optional; lower is better; inverted for display
+  inferenceTime?: number | null   // optional; ms; lower is better; normalised + inverted
+  color:          string
 }
 
 // ── Props ──────────────────────────────────────────────────────────────────────
@@ -46,7 +47,20 @@ const props = defineProps<{
 // ── Normalisation ──────────────────────────────────────────────────────────────
 const MAX_PSNR = computed(() => props.maxPsnr ?? 40)
 
-/** Convert slot to a 0-1 score for each radar axis */
+const hasLpips = computed(() =>
+  props.slots.some(s => s.lpips !== null && s.lpips !== undefined),
+)
+
+const hasSpeed = computed(() =>
+  props.slots.some(s => s.inferenceTime !== null && s.inferenceTime !== undefined),
+)
+
+/** Maximum inference time across all slots — used to normalise to 0-1 (lower = better → inverted). */
+const maxInferenceTime = computed(() =>
+  Math.max(...props.slots.map(s => s.inferenceTime ?? 0), 1),
+)
+
+/** Convert a slot to an array of 0-1 scores, one per active radar axis. */
 function normalise(slot: RadarSlot): number[] {
   const psnrNorm = slot.psnr !== null
     ? Math.min(slot.psnr / MAX_PSNR.value, 1)
@@ -56,25 +70,33 @@ function normalise(slot: RadarSlot): number[] {
     ? Math.max(0, Math.min(slot.ssim, 1))
     : 0
 
-  // LPIPS: lower is better → invert (+1-lpips, clamped 0-1)
-  const lpipsNorm = slot.lpips !== null && slot.lpips !== undefined
-    ? Math.max(0, Math.min(1 - slot.lpips, 1))
-    : null
+  const axes: number[] = [psnrNorm, ssimNorm]
 
-  return lpipsNorm !== null
-    ? [psnrNorm, ssimNorm, lpipsNorm]
-    : [psnrNorm, ssimNorm]
+  // LPIPS: lower is better → invert (1 − lpips, clamped 0-1)
+  if (hasLpips.value) {
+    const lpipsNorm = slot.lpips !== null && slot.lpips !== undefined
+      ? Math.max(0, Math.min(1 - slot.lpips, 1))
+      : 0
+    axes.push(lpipsNorm)
+  }
+
+  // Inference time: lower is better → invert (1 − t/max, clamped 0-1)
+  if (hasSpeed.value) {
+    const speedNorm = slot.inferenceTime !== null && slot.inferenceTime !== undefined
+      ? Math.max(0, 1 - slot.inferenceTime / maxInferenceTime.value)
+      : 0
+    axes.push(speedNorm)
+  }
+
+  return axes
 }
 
-const hasLpips = computed(() =>
-  props.slots.some(s => s.lpips !== null && s.lpips !== undefined),
-)
-
-const radarLabels = computed(() =>
-  hasLpips.value
-    ? ['PSNR', 'SSIM', 'Perceptual (1-LPIPS)']
-    : ['PSNR', 'SSIM'],
-)
+const radarLabels = computed(() => {
+  const labels = ['PSNR', 'SSIM']
+  if (hasLpips.value)  labels.push('Perceptual (1−LPIPS)')
+  if (hasSpeed.value)  labels.push('Speed (norm)')
+  return labels
+})
 
 // ── Chart data ─────────────────────────────────────────────────────────────────
 const chartData = computed(() => ({

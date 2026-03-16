@@ -5,6 +5,9 @@ All functions expect RGB images as numpy arrays with shape (H, W, 3)
 and values in the range [0, 1].
 """
 
+import time
+from typing import Any, Callable
+
 import numpy as np
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 import torch
@@ -83,6 +86,46 @@ def compute_lpips(pred: np.ndarray, target: np.ndarray, device: str = "cpu") -> 
         dist = model(_to_tensor(pred), _to_tensor(target))
 
     return float(dist.item())
+
+
+def time_inference(
+    fn: Callable,
+    *args: Any,
+    device: str = "cpu",
+    **kwargs: Any,
+) -> tuple[Any, float]:
+    """
+    Measure wall-clock time for a single forward-pass call in milliseconds.
+
+    For CUDA devices the GPU is synchronised before and after the call so that
+    asynchronous kernel execution does not skew the measurement.  MPS
+    synchronisation is applied when available.
+
+    Args:
+        fn:     Callable to time (e.g. a lambda wrapping ``model(tensor)``).
+        *args:  Positional arguments forwarded to *fn*.
+        device: Torch device string — used to decide whether to synchronise.
+        **kwargs: Keyword arguments forwarded to *fn*.
+
+    Returns:
+        ``(result, elapsed_ms)`` — *fn*'s return value and elapsed wall-clock
+        time in milliseconds.
+    """
+    def _sync() -> None:
+        if "cuda" in device:
+            torch.cuda.synchronize()
+        elif "mps" in device:
+            try:
+                torch.mps.synchronize()
+            except Exception:
+                pass
+
+    _sync()
+    t0 = time.perf_counter()
+    result = fn(*args, **kwargs)
+    _sync()
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    return result, elapsed_ms
 
 
 def evaluate_batch(

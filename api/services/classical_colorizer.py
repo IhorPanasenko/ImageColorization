@@ -98,23 +98,27 @@ class ClassicalColorizer:
         """
         from algorithms.welsh import colorize_welsh
         from algorithms.levin import colorize_levin
+        from utils.metrics import time_inference
 
         # -- Run the algorithm -------------------------------------------------
-        if method == 'welsh':
-            pred_rgb = colorize_welsh(
-                target_path, reference_path,
-                target_size=TARGET_SIZE,
-                window=window,
-            )
-        elif method == 'levin':
-            pred_rgb = colorize_levin(
-                target_path, reference_path,
-                target_size=TARGET_SIZE,
-                n_hints=n_hints,
-                window=3,
-            )
-        else:
-            raise ValueError(f'Unknown classical method: {method!r}')
+        def _run_algorithm():
+            if method == 'welsh':
+                return colorize_welsh(
+                    target_path, reference_path,
+                    target_size=TARGET_SIZE,
+                    window=window,
+                )
+            elif method == 'levin':
+                return colorize_levin(
+                    target_path, reference_path,
+                    target_size=TARGET_SIZE,
+                    n_hints=n_hints,
+                    window=3,
+                )
+            else:
+                raise ValueError(f'Unknown classical method: {method!r}')
+
+        pred_rgb, elapsed_ms = time_inference(_run_algorithm, device='cpu')
 
         # -- Build display images ----------------------------------------------
         original_np = (
@@ -131,7 +135,8 @@ class ClassicalColorizer:
             'colorized': _img_to_b64(pred_disp),
             'grayscale': _img_to_b64(gray_disp),
             'original':  _img_to_b64(original_np),
-            'metrics':   {'psnr': None, 'ssim': None, 'lpips': None},
+            'metrics':   {'psnr': None, 'ssim': None, 'lpips': None,
+                         'inference_time_ms': round(elapsed_ms, 2)},
         }
 
         # -- Metrics (colour_photo mode only) ----------------------------------

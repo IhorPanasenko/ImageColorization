@@ -53,31 +53,27 @@
     </div>
 
     <!-- ── Reference image (classical models only) ──────────────────────────── -->
-    <transition name="fade">
-      <div v-if="isClassical" class="card space-y-4">
-        <div class="flex items-center gap-2">
-          <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Reference Colour Image</h2>
-          <span class="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full">
-            Required for classical algorithms
-          </span>
-        </div>
-        <p class="text-xs text-gray-500 dark:text-gray-400">
-          Upload a colour photo whose palette will be transferred to your greyscale input.
-        </p>
-        <ImageDropzone
-          :file="referenceFile"
-          :preview-max-height="200"
-          @file-selected="onReferenceSelected"
-          @file-cleared="onReferenceCleared"
-        />
-      </div>
-    </transition>
-
-    <!-- ── Upload + Action ───────────────────────────────────────────────────── -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <!-- Drop zone -->
       <div class="card space-y-4">
         <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Image</h2>
+
+        <!-- Classical algorithm hint -->
+        <transition name="fade">
+          <div
+            v-if="isClassical"
+            class="flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 px-3 py-2"
+          >
+            <AlertCircle class="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+            <p class="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
+              <strong>Colour photo required.</strong>
+              Classical algorithms use the image's own colour palette as a reference.
+              Upload a <em>colour</em> photo — its L channel will be re-colourized using
+              the hues from the same image.
+            </p>
+          </div>
+        </transition>
+
         <ImageDropzone
           :file="selectedFile"
           :preview-max-height="280"
@@ -118,10 +114,6 @@
           <p v-if="!isClassical && !config.checkpoint && !loadingMeta" class="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
             <AlertCircle class="w-3.5 h-3.5" />
             Select a checkpoint first.
-          </p>
-          <p v-if="isClassical && !referenceFile" class="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-            <AlertCircle class="w-3.5 h-3.5" />
-            Upload a reference colour image above.
           </p>
         </div>
 
@@ -174,12 +166,14 @@
           />
         </div>
 
-        <!-- Metrics cards (only when comparing against ground truth in colour mode) -->
+        <!-- Metrics cards (always shown — inference time is always available;
+             PSNR/SSIM/LPIPS appear only in colour-photo mode) -->
         <MetricsCards
-          v-if="result.metrics.psnr !== null || result.metrics.ssim !== null"
           :psnr="result.metrics.psnr"
           :ssim="result.metrics.ssim"
-          :columns="2"
+          :lpips="result.metrics.lpips"
+          :inference-time-ms="result.metrics.inference_time_ms"
+          :columns="4"
         />
 
         <!-- How the pipeline works callout -->
@@ -229,11 +223,10 @@ const modeOptions = [
 // ── State ──────────────────────────────────────────────────────────────────────
 const checkpoints  = ref<CheckpointInfo[]>([])
 const loadingMeta  = ref(true)
-const loading       = ref(false)
-const error         = ref<string | null>(null)
-const selectedFile  = ref<File | null>(null)
-const referenceFile = ref<File | null>(null)
-const result        = ref<ColorizeResult | null>(null)
+const loading      = ref(false)
+const error        = ref<string | null>(null)
+const selectedFile = ref<File | null>(null)
+const result       = ref<ColorizeResult | null>(null)
 
 const config = reactive({
   model:      'unet' as ModelType,
@@ -248,7 +241,7 @@ const isClassical = computed(() => CLASSICAL_MODEL_IDS.has(config.model))
 
 const canColorize = computed(() => {
   if (!selectedFile.value) return false
-  if (isClassical.value) return referenceFile.value !== null
+  if (isClassical.value) return true
   return config.checkpoint !== ''
 })
 
@@ -306,14 +299,6 @@ function onFileCleared() {
   error.value  = null
 }
 
-function onReferenceSelected(file: File) {
-  referenceFile.value = file
-}
-
-function onReferenceCleared() {
-  referenceFile.value = null
-}
-
 async function runColorize() {
   if (!selectedFile.value) return
   loading.value = true
@@ -321,12 +306,15 @@ async function runColorize() {
   result.value  = null
 
   try {
+    // For classical algorithms the uploaded image acts as its own colour reference:
+    // the algorithm extracts the L channel as the grayscale target and uses the
+    // original colour information as the palette source.
     result.value = await inferenceApi.colorize(
       selectedFile.value,
       config.model,
       config.checkpoint,
       config.mode,
-      referenceFile.value ?? undefined,
+      isClassical.value ? selectedFile.value : undefined,
     )
     toast.success('Colorization complete!')
   } catch (err: unknown) {

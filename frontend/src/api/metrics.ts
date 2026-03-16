@@ -1,5 +1,5 @@
 import api from './client'
-import type { ModelType, EvalResult, ColorizeResult } from '@/types'
+import type { ModelType, EvalResult, ColorizeResult, BenchmarkModelConfig, BenchmarkResult } from '@/types'
 
 export const metricsApi = {
   evaluateSingle: (imagePath: string, model: ModelType, checkpoint: string) =>
@@ -22,5 +22,12 @@ export const metricsApi = {
     api.post<(ColorizeResult & { label: string })[]>(
       '/metrics/compare',
       { image_path: imagePath, models },
+    ).then((r) => r.data),
+
+  benchmark: (models: BenchmarkModelConfig[], maxImages?: number, imageDir?: string) =>
+    api.post<BenchmarkResult>(
+      '/metrics/benchmark',
+      { models, max_images: maxImages, image_dir: imageDir || undefined },
+      { timeout: 600_000 },
     ).then((r) => r.data),
 }

@@ -38,7 +38,7 @@ from src.models.discriminator import PatchDiscriminator
 from src.utils.dataset import ColorizationDataset
 from src.utils.common import lab_to_rgb
 from src.utils.metrics import compute_psnr, compute_ssim
-from src.losses import GANLoss, PerceptualLoss, ab_to_pseudo_rgb
+from src.losses import GANLoss, PerceptualLoss, HistogramLoss, ab_to_pseudo_rgb
 
 
 def get_args():
@@ -50,9 +50,13 @@ def get_args():
     parser.add_argument("--lr_g",                type=float, default=None,    help="Generator learning rate (overrides --lr)")
     parser.add_argument("--lr_d",                type=float, default=None,    help="Discriminator learning rate (overrides --lr)")
     # Loss weights
-    parser.add_argument("--lambda_l1",           type=float, default=100.0,   help="Weight of L1 loss")
-    parser.add_argument("--lambda_perceptual",   type=float, default=10.0,    help="Weight of VGG perceptual loss (0 = disable)")
+    parser.add_argument("--lambda_l1",           type=float, default=75.0,    help="Weight of L1 loss (reduced to avoid grey regression)")
+    parser.add_argument("--lambda_perceptual",   type=float, default=20.0,    help="Weight of VGG perceptual loss (0 = disable)")
+    parser.add_argument("--lambda_histogram",    type=float, default=5.0,     help="Weight of ab colour-histogram loss (0 = disable)")
     parser.add_argument("--label_smoothing",     type=float, default=0.1,     help="Label smoothing for discriminator (0 = disable)")
+    # Hint network
+    parser.add_argument("--freeze_hint_net",     action="store_true",          help="Freeze GlobalHintNet (legacy behaviour). By default it is jointly fine-tuned with the generator.")
+    parser.add_argument("--lr_hint",             type=float, default=None,    help="GlobalHintNet learning rate (default: lr * 0.1)")
     # Paths
     parser.add_argument("--data_path",  type=str, default=os.path.join(_PROJECT_ROOT, "data", "coco", "val2017"))
     parser.add_argument("--save_dir",   type=str, default=os.path.join(_PROJECT_ROOT, "outputs", "checkpoints"))
@@ -71,6 +75,8 @@ def get_args():
         args.lr_g = args.lr
     if args.lr_d is None:
         args.lr_d = args.lr
+    if args.lr_hint is None:
+        args.lr_hint = args.lr * 0.1
     return args
 
 
@@ -148,8 +154,13 @@ def train_fusion(args):
     print(f"Train: {len(train_dataset)} images | Val: {len(val_dataset)} images")
 
     # ── Models ─────────────────────────────────────────────────────────────────
-    hint_net = GlobalHintNet().to(device)
-    hint_net.eval()  # frozen — no optimizer
+    hint_net = GlobalHintNet(freeze=args.freeze_hint_net).to(device)
+    if args.freeze_hint_net:
+        hint_net.eval()  # frozen legacy mode
+        print("GlobalHintNet: FROZEN (legacy mode)")
+    else:
+        hint_net.train()  # jointly fine-tuned with generator
+        print("GlobalHintNet: TRAINABLE (jointly fine-tuned with generator, lr={:.2e})".format(args.lr_hint))
     net_G = UNetFusion().to(device)
     net_D = PatchDiscriminator().to(device)
 
@@ -175,10 +186,18 @@ def train_fusion(args):
         criterion_perceptual = PerceptualLoss().to(device)
         criterion_perceptual.eval()
         print(f"VGG perceptual loss enabled (weight={args.lambda_perceptual})")
+    criterion_histogram = None
+    if args.lambda_histogram > 0:
+        criterion_histogram = HistogramLoss().to(device)
+        print(f"Histogram loss enabled (weight={args.lambda_histogram})")
 
     # ── Optimizers ─────────────────────────────────────────────────────────────
     optimizer_G = optim.Adam(net_G.parameters(), lr=args.lr_g, betas=(0.5, 0.999))
     optimizer_D = optim.Adam(net_D.parameters(), lr=args.lr_d, betas=(0.5, 0.999))
+    optimizer_hint = (
+        optim.Adam(hint_net.parameters(), lr=args.lr_hint, betas=(0.5, 0.999))
+        if not args.freeze_hint_net else None
+    )
 
     def lr_lambda(epoch):
         decay_start = args.epochs // 2
@@ -188,6 +207,10 @@ def train_fusion(args):
 
     scheduler_G = optim.lr_scheduler.LambdaLR(optimizer_G, lr_lambda=lr_lambda)
     scheduler_D = optim.lr_scheduler.LambdaLR(optimizer_D, lr_lambda=lr_lambda)
+    scheduler_hint = (
+        optim.lr_scheduler.LambdaLR(optimizer_hint, lr_lambda=lr_lambda)
+        if optimizer_hint is not None else None
+    )
 
     # ── Resume ─────────────────────────────────────────────────────────────────
     epoch_g     = _load_if_exists(net_G, args.resume_g, device)
@@ -197,6 +220,8 @@ def train_fusion(args):
     for _ in range(start_epoch):
         scheduler_G.step()
         scheduler_D.step()
+        if scheduler_hint is not None:
+            scheduler_hint.step()
     if start_epoch:
         print(f"Resumed from epoch {start_epoch}")
 
@@ -215,7 +240,14 @@ def train_fusion(args):
 
             _amp = device.type == "mps"
 
-            with torch.no_grad():
+            # ── Hint network forward ───────────────────────────────────────────
+            # When hint_net is frozen use no_grad to save memory; when trainable
+            # keep the graph so gradients can flow into it during the G step.
+            if args.freeze_hint_net:
+                with torch.no_grad():
+                    with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=_amp):
+                        global_hint = hint_net(real_L)
+            else:
                 with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=_amp):
                     global_hint = hint_net(real_L)
 
@@ -231,8 +263,10 @@ def train_fusion(args):
             loss_D.backward()
             optimizer_D.step()
 
-            # ── Generator step ─────────────────────────────────────────────────
+            # ── Generator + hint step ──────────────────────────────────────────
             optimizer_G.zero_grad()
+            if optimizer_hint is not None:
+                optimizer_hint.zero_grad()
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=_amp):
                 pred_fake_for_G = net_D(real_L, fake_ab)
                 loss_G_GAN = criterion_GAN(pred_fake_for_G, target_is_real=True)
@@ -247,25 +281,39 @@ def train_fusion(args):
                 loss_perc = criterion_perceptual(pred_pseudo, real_pseudo) * args.lambda_perceptual
                 loss_G = loss_G + loss_perc
 
+            # Colour histogram loss
+            loss_hist = torch.tensor(0.0, device=device)
+            if criterion_histogram is not None:
+                loss_hist = criterion_histogram(fake_ab.float(), real_ab.float()) * args.lambda_histogram
+                loss_G = loss_G + loss_hist
+
             loss_G.backward()
             torch.nn.utils.clip_grad_norm_(net_G.parameters(), max_norm=1.0)
+            if optimizer_hint is not None:
+                torch.nn.utils.clip_grad_norm_(hint_net.parameters(), max_norm=1.0)
             optimizer_G.step()
+            if optimizer_hint is not None:
+                optimizer_hint.step()
 
             sum_D += loss_D.item()
             sum_G += loss_G.item()
             sum_perc += loss_perc.item()
-            loop.set_postfix(D=f"{loss_D.item():.4f}", G=f"{loss_G.item():.4f}")
+            loop.set_postfix(D=f"{loss_D.item():.4f}", G=f"{loss_G.item():.4f}", hist=f"{loss_hist.item():.4f}")
             if writer:
                 writer.add_scalar("Loss_D/step", loss_D.item(), global_step)
                 writer.add_scalar("Loss_G/step", loss_G.item(), global_step)
                 if args.lambda_perceptual > 0:
                     writer.add_scalar("Loss_Perceptual/step", loss_perc.item(), global_step)
+                if args.lambda_histogram > 0:
+                    writer.add_scalar("Loss_Histogram/step", loss_hist.item(), global_step)
             global_step += 1
 
         n = len(train_loader)
         current_lr_g = optimizer_G.param_groups[0]["lr"]
         scheduler_G.step()
         scheduler_D.step()
+        if scheduler_hint is not None:
+            scheduler_hint.step()
         print(f"  Epoch {epoch+1}/{args.epochs} | "
               f"Avg D: {sum_D/n:.4f} | Avg G: {sum_G/n:.4f} | "
               f"Avg Perc: {sum_perc/n:.4f} | LR: {current_lr_g:.6f}")
@@ -276,8 +324,10 @@ def train_fusion(args):
 
         # ── Periodic checkpoint ─────────────────────────────────────────────────
         if (epoch + 1) % 5 == 0:
-            torch.save(net_G.state_dict(),
-                       os.path.join(args.save_dir, f"fusion_generator_epoch_{epoch+1}.pth"))
+            g_ckpt = {'model_state_dict': net_G.state_dict()}
+            if not args.freeze_hint_net:
+                g_ckpt['hint_net_state_dict'] = hint_net.state_dict()
+            torch.save(g_ckpt, os.path.join(args.save_dir, f"fusion_generator_epoch_{epoch+1}.pth"))
             torch.save(net_D.state_dict(),
                        os.path.join(args.save_dir, f"fusion_discriminator_epoch_{epoch+1}.pth"))
             print(f"  Checkpoints saved at epoch {epoch+1}")
@@ -292,11 +342,17 @@ def train_fusion(args):
             if val_psnr > best_val_psnr:
                 best_val_psnr = val_psnr
                 best_ckpt = os.path.join(args.save_dir, "fusion_generator_best.pth")
-                torch.save(net_G.state_dict(), best_ckpt)
+                best_payload = {'model_state_dict': net_G.state_dict()}
+                if not args.freeze_hint_net:
+                    best_payload['hint_net_state_dict'] = hint_net.state_dict()
+                torch.save(best_payload, best_ckpt)
                 print(f"  ** New best val PSNR {best_val_psnr:.2f} — saved {best_ckpt}")
 
     # ── Final save ─────────────────────────────────────────────────────────────
-    torch.save(net_G.state_dict(), os.path.join(args.save_dir, "fusion_generator_final.pth"))
+    final_payload = {'model_state_dict': net_G.state_dict()}
+    if not args.freeze_hint_net:
+        final_payload['hint_net_state_dict'] = hint_net.state_dict()
+    torch.save(final_payload, os.path.join(args.save_dir, "fusion_generator_final.pth"))
     torch.save(net_D.state_dict(), os.path.join(args.save_dir, "fusion_discriminator_final.pth"))
     print(f"Fusion GAN Training Finished! Best val PSNR: {best_val_psnr:.2f} dB")
     if writer:

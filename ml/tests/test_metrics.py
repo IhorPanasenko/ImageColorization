@@ -9,7 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # Skip the entire module if any required package is missing
 lpips = pytest.importorskip("lpips", reason="lpips not installed — skipping metric tests")
 
-from src.utils.metrics import compute_psnr, compute_ssim, compute_lpips, evaluate_batch
+from src.utils.metrics import compute_psnr, compute_ssim, compute_lpips, evaluate_batch, time_inference
 
 
 # ---------------------------------------------------------------------------
@@ -101,3 +101,38 @@ def test_evaluate_batch_returns_all_keys():
     )
     for key, val in result.items():
         assert math.isfinite(val), f"Metric '{key}' is not finite: {val}"
+
+
+# ---------------------------------------------------------------------------
+# time_inference
+# ---------------------------------------------------------------------------
+
+def test_time_inference_returns_result_and_positive_ms():
+    """time_inference must return (callable result, positive elapsed ms)."""
+    def _add(a, b):
+        return a + b
+
+    result, elapsed_ms = time_inference(_add, 3, 4, device="cpu")
+    assert result == 7, f"Expected 7, got {result}"
+    assert elapsed_ms > 0, f"Expected positive elapsed time, got {elapsed_ms}"
+
+
+def test_time_inference_elapsed_is_float():
+    """elapsed_ms returned by time_inference must be a plain float."""
+    _, elapsed_ms = time_inference(lambda: None, device="cpu")
+    assert isinstance(elapsed_ms, float), (
+        f"Expected float, got {type(elapsed_ms)}"
+    )
+
+
+def test_time_inference_slow_call_reflects_duration():
+    """A deliberate sleep must be reflected in the measured elapsed time."""
+    import time
+
+    def _sleep_10ms():
+        time.sleep(0.01)
+
+    _, elapsed_ms = time_inference(_sleep_10ms, device="cpu")
+    # Allow generous bounds: ≥ 8 ms (timing resolution jitter) and < 500 ms
+    assert elapsed_ms >= 8, f"Expected ≥ 8 ms for a 10 ms sleep, got {elapsed_ms:.2f} ms"
+    assert elapsed_ms < 500, f"Unexpectedly high elapsed time: {elapsed_ms:.2f} ms"

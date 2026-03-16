@@ -42,10 +42,11 @@ import { computed } from 'vue'
 
 const props = withDefaults(
   defineProps<{
-    psnr?:    number | null
-    ssim?:    number | null
-    lpips?:   number | null
-    columns?: 1 | 2 | 3
+    psnr?:             number | null
+    ssim?:             number | null
+    lpips?:            number | null
+    inferenceTimeMs?:  number | null
+    columns?:          1 | 2 | 3 | 4
   }>(),
   {
     columns: 3,
@@ -55,6 +56,7 @@ const props = withDefaults(
 const gridCols = computed(() => {
   if (props.columns === 1) return 'grid-cols-1'
   if (props.columns === 2) return 'grid-cols-2'
+  if (props.columns === 4) return 'grid-cols-2 lg:grid-cols-4'
   return 'grid-cols-1 sm:grid-cols-3'
 })
 
@@ -128,6 +130,20 @@ const cards = computed<CardDef[]>(() => {
       label: 'LPIPS',
       formatted: props.lpips != null ? props.lpips.toFixed(4) : '—',
       hint: 'lower is better · ≤ 0.2 = good',
+      barClass: qualityBarClass(q),
+      valueClass: qualityValueClass(q),
+    })
+  }
+
+  if (props.inferenceTimeMs !== undefined) {
+    const t = props.inferenceTimeMs
+    // Colour-code by latency: ≤100 ms good, ≤500 ms ok, else poor
+    const q: Quality = t == null ? 'neutral' : t <= 100 ? 'good' : t <= 500 ? 'ok' : 'poor'
+    result.push({
+      key: 'inference_time',
+      label: 'Inference',
+      formatted: t != null ? `${t.toFixed(1)} ms` : '—',
+      hint: 'forward-pass latency · ≤ 100 ms = fast',
       barClass: qualityBarClass(q),
       valueClass: qualityValueClass(q),
     })

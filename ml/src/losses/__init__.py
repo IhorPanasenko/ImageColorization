@@ -98,3 +98,61 @@ def ab_to_pseudo_rgb(L: torch.Tensor, ab: torch.Tensor) -> torch.Tensor:
     """
     ab_scaled = (ab + 1.0) / 2.0  # [-1,1] -> [0,1]
     return torch.cat([L, ab_scaled], dim=1)  # (B, 3, H, W)
+
+
+class HistogramLoss(nn.Module):
+    """
+    Differentiable colour-histogram matching loss for the *ab* channels.
+
+    PSNR and L1 penalise per-pixel deviations regardless of whether the
+    chosen colour is semantically plausible.  A model that regresses to grey
+    (a=0, b=0 everywhere) minimises pixel-wise error but produces visually
+    wrong results.  Matching the *global* ab distribution forces the model to
+    pick colours with the right overall statistics even when per-pixel
+    assignment is ambiguous.
+
+    Implementation: soft histogram via Gaussian kernel (differentiable).
+    The loss is the mean squared difference between the normalised histograms
+    of pred_ab and real_ab over each of the two ab channels.
+
+    Args:
+        bins:      Number of histogram bins (default 32).
+        bandwidth: Gaussian kernel bandwidth in normalised ab units (default 0.1).
+    """
+
+    def __init__(self, bins: int = 32, bandwidth: float = 0.1):
+        super().__init__()
+        self.bins = bins
+        self.bandwidth = bandwidth
+        # Fixed bin centres in [-1, 1]
+        edges = torch.linspace(-1.0, 1.0, bins)
+        self.register_buffer('edges', edges)
+
+    def _soft_hist(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Compute a soft (differentiable) normalised histogram for a flat tensor x.
+        Returns a (bins,) tensor that sums to 1.
+        """
+        # x: (N,)  edges: (bins,)
+        diff = x.unsqueeze(1) - self.edges.unsqueeze(0)  # (N, bins)
+        weights = torch.exp(-0.5 * (diff / self.bandwidth) ** 2)
+        hist = weights.sum(dim=0)                         # (bins,)
+        return hist / (hist.sum() + 1e-8)
+
+    def forward(self, pred_ab: torch.Tensor, real_ab: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            pred_ab: (B, 2, H, W) predicted ab in [-1, 1].
+            real_ab: (B, 2, H, W) ground-truth ab in [-1, 1].
+        Returns:
+            Scalar loss.
+        """
+        loss = torch.tensor(0.0, device=pred_ab.device)
+        for c in range(2):
+            pred_flat = pred_ab[:, c].reshape(-1)
+            real_flat = real_ab[:, c].reshape(-1)
+            pred_hist = self._soft_hist(pred_flat)
+            with torch.no_grad():
+                real_hist = self._soft_hist(real_flat)
+            loss = loss + torch.mean((pred_hist - real_hist) ** 2)
+        return loss

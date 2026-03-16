@@ -80,3 +80,33 @@ def batch_evaluate():
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
     return jsonify(result)
+
+
+@bp.route('/benchmark', methods=['POST'])
+def benchmark():
+    """Run all provided model configs on the test set and return aggregated metrics.
+
+    JSON body:
+        {
+            "models": [
+                {"model": str, "checkpoint": str, "label": str},
+                ...
+            ],
+            "max_images": int | null,    (optional, limit number of test images)
+            "image_dir": str | null      (optional, custom server-side image folder)
+        }
+    """
+    data = request.get_json(force=True) or {}
+    models = data.get('models', [])
+    if not models:
+        return jsonify({'error': 'No models provided'}), 400
+    try:
+        result = _svc.benchmark(
+            models,
+            sample_dir=current_app.config['SAMPLE_DIR'],
+            max_images=data.get('max_images'),
+            image_dir=data.get('image_dir'),
+        )
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+    return jsonify(result)

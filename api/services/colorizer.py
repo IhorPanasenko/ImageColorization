@@ -88,7 +88,7 @@ class Colorizer:
         import torch
         # All image-processing helpers live in src.utils.common
         from src.utils.common import get_device, prepare_grayscale_input, lab_to_rgb
-        from src.utils.metrics import compute_psnr, compute_ssim, compute_lpips
+        from src.utils.metrics import compute_psnr, compute_ssim, compute_lpips, time_inference
 
         # Prefer MPS (Apple Silicon), then CUDA, else CPU
         device = get_device()
@@ -106,12 +106,14 @@ class Colorizer:
         )
         L_tensor = L_tensor.to(device)
 
-        with torch.no_grad():
+        def _forward():
             if hint_net is not None:
                 global_hint = hint_net(L_tensor)          # (1, 512)
-                pred_ab = model(L_tensor, global_hint)    # (1, 2, H, W)
-            else:
-                pred_ab = model(L_tensor)                 # (1, 2, H, W)
+                return model(L_tensor, global_hint)       # (1, 2, H, W)
+            return model(L_tensor)                        # (1, 2, H, W)
+
+        with torch.no_grad():
+            pred_ab, inference_time_ms = time_inference(_forward, device=str(device))
 
         pred_rgb = lab_to_rgb(L_tensor[0], pred_ab[0])   # (H, W, 3) float32
 
@@ -138,7 +140,12 @@ class Colorizer:
             'colorized': _img_to_b64(pred_disp),
             'grayscale': _img_to_b64(gray_disp),
             'original':  _img_to_b64(original_np),
-            'metrics':   {'psnr': None, 'ssim': None, 'lpips': None},
+            'metrics':   {
+                'psnr': None,
+                'ssim': None,
+                'lpips': None,
+                'inference_time_ms': round(inference_time_ms, 2),
+            },
         }
 
         # Compute metrics only in color_photo mode
@@ -180,6 +187,11 @@ class Colorizer:
             state = checkpoint.get('model_state_dict', checkpoint)
             model.load_state_dict(state)
 
+            # Load fine-tuned hint_net weights when present (new-style checkpoints).
+            # Falls back silently to default ImageNet weights for old checkpoints.
+            if hint_net is not None and isinstance(checkpoint, dict) and 'hint_net_state_dict' in checkpoint:
+                hint_net.load_state_dict(checkpoint['hint_net_state_dict'])
+
         model.to(device).eval()
         if hint_net is not None:
             hint_net.eval()
@@ -204,7 +216,9 @@ class Colorizer:
             from src.models.unet_fusion import UNetFusion
             from src.models.global_hints import GlobalHintNet
             model = UNetFusion().to(device)
-            hint_net = GlobalHintNet().to(device)
+            # freeze=False keeps the layer weights modifiable so that
+            # fine-tuned hint_net_state_dict can be loaded on top.
+            hint_net = GlobalHintNet(freeze=False).to(device)
         else:
             raise ValueError(f'Unknown model type: {model_type!r}')
         return model, hint_net

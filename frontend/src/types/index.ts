@@ -64,7 +64,8 @@ export interface ColorizeResult {
   metrics: {
     psnr: number | null
     ssim: number | null
-    lpips?: number | null
+    lpips: number | null
+    inference_time_ms: number | null  // forward-pass latency in milliseconds
   }
 }
 
@@ -74,6 +75,8 @@ export interface ImageMetrics {
   filename: string
   psnr: number | null
   ssim: number | null
+  lpips: number | null
+  inference_time_ms: number | null  // forward-pass latency in milliseconds
   error?: string
 }
 
@@ -83,7 +86,32 @@ export interface EvalResult {
   per_image: ImageMetrics[]
   avg_psnr: number | null
   avg_ssim: number | null
+  avg_lpips: number | null
+  avg_inference_time_ms: number | null  // average forward-pass latency in milliseconds
   num_images: number
+}
+
+// ─── Benchmark ───────────────────────────────────────────────────────────────
+
+export interface BenchmarkModelConfig {
+  model: ModelType
+  checkpoint: string
+  label: string
+}
+
+export interface BenchmarkModelResult {
+  label: string
+  model: ModelType
+  per_image: ImageMetrics[]
+  avg_psnr: number | null
+  avg_ssim: number | null
+  avg_lpips: number | null
+  avg_inference_time_ms: number | null
+  num_images: number
+}
+
+export interface BenchmarkResult {
+  results: BenchmarkModelResult[]
 }
 
 // ─── Checkpoints / Models ────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ from src.models.u_net import UNet
 from src.models.unet_fusion import UNetFusion
 from src.models.global_hints import GlobalHintNet
 from src.utils.common import get_device, prepare_grayscale_input, lab_to_rgb, save_comparison_strip
-from src.utils.metrics import compute_psnr, compute_ssim, compute_lpips
+from src.utils.metrics import compute_psnr, compute_ssim, compute_lpips, time_inference
 
 
 def get_args():
@@ -77,19 +77,22 @@ def process_image(img_path: str, model, hint_net, device: torch.device):
     Run inference on a single image.
 
     Returns:
-        pred_rgb  (H, W, 3) float32 [0,1] — model colorization output
-        gt_rgb    (H, W, 3) float32 [0,1] — original ground-truth RGB
-        gray_rgb  (H, W, 3) float32 [0,1] — grayscale input (3-channel for display)
+        pred_rgb          (H, W, 3) float32 [0,1] — model colorization output
+        gt_rgb            (H, W, 3) float32 [0,1] — original ground-truth RGB
+        gray_rgb          (H, W, 3) float32 [0,1] — grayscale input (3-channel for display)
+        inference_time_ms float  — forward-pass wall-clock time in milliseconds
     """
     L_tensor, gt_rgb = prepare_grayscale_input(img_path, target_size=256)
     L_tensor = L_tensor.to(device)  # (1, 1, 256, 256)
 
-    with torch.no_grad():
+    def _forward():
         if hint_net is not None:
             global_hint = hint_net(L_tensor)           # (1, 512)
-            pred_ab = model(L_tensor, global_hint)     # (1, 2, 256, 256)
-        else:
-            pred_ab = model(L_tensor)                  # (1, 2, 256, 256)
+            return model(L_tensor, global_hint)        # (1, 2, 256, 256)
+        return model(L_tensor)                         # (1, 2, 256, 256)
+
+    with torch.no_grad():
+        pred_ab, inference_time_ms = time_inference(_forward, device=str(device))
 
     pred_rgb = lab_to_rgb(L_tensor[0], pred_ab[0])    # (H, W, 3)
 
@@ -98,7 +101,7 @@ def process_image(img_path: str, model, hint_net, device: torch.device):
     L_np = L_tensor[0].cpu().squeeze().numpy()         # (H, W) in [0,1]
     gray_rgb = np.stack([L_np] * 3, axis=2)            # (H, W, 3)
 
-    return pred_rgb, gt_rgb, gray_rgb
+    return pred_rgb, gt_rgb, gray_rgb, inference_time_ms
 
 
 def evaluate_single(img_path: str, model, hint_net, device: torch.device,
@@ -107,9 +110,11 @@ def evaluate_single(img_path: str, model, hint_net, device: torch.device,
     Evaluate one image: run inference, compute metrics, save comparison strip.
 
     Returns:
-        dict with keys 'psnr', 'ssim', 'lpips'
+        dict with keys 'psnr', 'ssim', 'lpips', 'inference_time_ms'
     """
-    pred_rgb, gt_rgb, gray_rgb = process_image(img_path, model, hint_net, device)
+    pred_rgb, gt_rgb, gray_rgb, inference_time_ms = process_image(
+        img_path, model, hint_net, device
+    )
 
     psnr  = compute_psnr(pred_rgb, gt_rgb)
     ssim  = compute_ssim(pred_rgb, gt_rgb)
@@ -120,10 +125,14 @@ def evaluate_single(img_path: str, model, hint_net, device: torch.device,
     save_comparison_strip(
         gray_rgb, pred_rgb, gt_rgb,
         save_path=out_path,
-        title=f"{model_name.upper()} — PSNR: {psnr:.2f} dB | SSIM: {ssim:.4f} | LPIPS: {lpips:.4f}",
+        title=(
+            f"{model_name.upper()} — "
+            f"PSNR: {psnr:.2f} dB | SSIM: {ssim:.4f} | "
+            f"LPIPS: {lpips:.4f} | Time: {inference_time_ms:.1f} ms"
+        ),
     )
 
-    return {"psnr": psnr, "ssim": ssim, "lpips": lpips}
+    return {"psnr": psnr, "ssim": ssim, "lpips": lpips, "inference_time_ms": inference_time_ms}
 
 
 def main():
@@ -159,9 +168,9 @@ def main():
     os.makedirs(args.save_dir, exist_ok=True)
 
     print(f"\nEvaluating {len(img_paths)} image(s) with model: {args.model.upper()}")
-    print(f"{'─' * 72}")
-    print(f"  {'Image':<32} {'PSNR (dB)':>10} {'SSIM':>8} {'LPIPS':>8}")
-    print(f"{'─' * 72}")
+    print(f"{'─' * 84}")
+    print(f"  {'Image':<32} {'PSNR (dB)':>10} {'SSIM':>8} {'LPIPS':>8} {'Time (ms)':>10}")
+    print(f"{'─' * 84}")
 
     # ── Evaluate ──────────────────────────────────────────────────────────────
     all_metrics = []
@@ -170,7 +179,7 @@ def main():
         all_metrics.append(metrics)
         name = os.path.basename(path)
         psnr_str  = f"{metrics['psnr']:>10.2f}" if metrics['psnr'] != float('inf') else f"{'∞':>10}"
-        print(f"  {name:<32} {psnr_str} {metrics['ssim']:>8.4f} {metrics['lpips']:>8.4f}")
+        print(f"  {name:<32} {psnr_str} {metrics['ssim']:>8.4f} {metrics['lpips']:>8.4f} {metrics['inference_time_ms']:>9.1f}")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     if len(all_metrics) > 1:
@@ -179,9 +188,13 @@ def main():
         avg_psnr  = float(np.mean(finite_psnr))  if finite_psnr else float('inf')
         avg_ssim  = float(np.mean([m["ssim"]  for m in all_metrics]))
         avg_lpips = float(np.mean([m["lpips"] for m in all_metrics]))
-        print(f"{'─' * 72}")
-        print(f"  {'Average (' + str(len(all_metrics)) + ' images)':<32} {avg_psnr:>10.2f} {avg_ssim:>8.4f} {avg_lpips:>8.4f}")
-    print(f"{'─' * 72}")
+        avg_time  = float(np.mean([m["inference_time_ms"] for m in all_metrics]))
+        print(f"{'─' * 84}")
+        print(
+            f"  {'Average (' + str(len(all_metrics)) + ' images)':<32}"
+            f" {avg_psnr:>10.2f} {avg_ssim:>8.4f} {avg_lpips:>8.4f} {avg_time:>9.1f}"
+        )
+    print(f"{'─' * 84}")
 
     print(f"\nComparison strips saved to: {args.save_dir}")
 

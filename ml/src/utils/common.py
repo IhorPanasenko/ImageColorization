@@ -79,32 +79,28 @@ def prepare_grayscale_input(
     Load an image, extract and normalize the L channel for model input,
     and return the ground-truth RGB for comparison.
 
+    The image is squash-resized to (target_size × target_size), matching the
+    transforms.Resize((256, 256)) used in every training script.  Using a
+    different resize strategy (e.g. aspect-preserving + black padding) would
+    introduce a train/inference distribution mismatch that degrades PSNR.
+
     Args:
         img_path:    Path to the input image file.
-        target_size: Resize the shorter edge to this value (default 256).
+        target_size: Square size the image is resized to (default 256).
 
     Returns:
         L_tensor:     Float tensor of shape (1, 1, H, W), L channel in [0, 1].
         original_rgb: Ground-truth RGB as float32 numpy (H, W, 3) in [0, 1].
-        meta (opt):   Resize/pad metadata for aspect-ratio recovery.
+        meta (opt):   Resize metadata for downstream display / aspect-ratio
+                      recovery.  pad_* fields are always 0 (no padding applied).
     """
     img = Image.open(img_path).convert("RGB")
     orig_w, orig_h = img.size
 
-    scale = target_size / max(orig_w, orig_h)
-    resized_w = max(1, int(round(orig_w * scale)))
-    resized_h = max(1, int(round(orig_h * scale)))
-    img_resized = img.resize((resized_w, resized_h), _RESAMPLE)
+    # Squash-resize to match training transforms.Resize((target_size, target_size))
+    img_resized = img.resize((target_size, target_size), _RESAMPLE)
 
-    pad_left = (target_size - resized_w) // 2
-    pad_top = (target_size - resized_h) // 2
-    pad_right = target_size - resized_w - pad_left
-    pad_bottom = target_size - resized_h - pad_top
-
-    img_padded = Image.new("RGB", (target_size, target_size), (0, 0, 0))
-    img_padded.paste(img_resized, (pad_left, pad_top))
-
-    img_np = np.array(img_padded)
+    img_np = np.array(img_resized)
     lab = color.rgb2lab(img_np).astype(np.float32)
 
     L = lab[:, :, 0] / 100.0                           # (H, W) in [0, 1]
@@ -116,12 +112,12 @@ def prepare_grayscale_input(
         meta = {
             "orig_w": orig_w,
             "orig_h": orig_h,
-            "resized_w": resized_w,
-            "resized_h": resized_h,
-            "pad_left": pad_left,
-            "pad_top": pad_top,
-            "pad_right": pad_right,
-            "pad_bottom": pad_bottom,
+            "resized_w": target_size,
+            "resized_h": target_size,
+            "pad_left": 0,
+            "pad_top": 0,
+            "pad_right": 0,
+            "pad_bottom": 0,
         }
         return L_tensor, original_rgb, meta
 
