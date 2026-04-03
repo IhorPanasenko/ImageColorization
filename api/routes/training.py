@@ -56,7 +56,10 @@ def stream_log(run_id: str):
         for event in _runner.stream(run_id):
             yield f'data: {event}\n\n'
 
-    return Response(generate(), mimetype='text/event-stream')
+    resp = Response(generate(), mimetype='text/event-stream')
+    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['X-Accel-Buffering'] = 'no'
+    return resp
 
 
 @bp.route('/stop/<run_id>', methods=['POST'])

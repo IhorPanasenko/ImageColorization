@@ -90,7 +90,6 @@ class Colorizer:
         from src.utils.common import get_device, prepare_grayscale_input, lab_to_rgb
         from src.utils.metrics import compute_psnr, compute_ssim, compute_lpips, time_inference
 
-        # Prefer MPS (Apple Silicon), then CUDA, else CPU
         device = get_device()
         model, hint_net = self._load_model(model_type, checkpoint_path, device)
 
@@ -183,7 +182,11 @@ class Colorizer:
 
         if checkpoint_path and os.path.exists(checkpoint_path):
             import torch
-            checkpoint = torch.load(checkpoint_path, map_location=device)
+            # weights_only=False restores the pre-2.6 pickle-based loader.
+            # The new safe-loader (default in torch >=2.6) validates the
+            # entire pickle stream before deserializing, which is ~10–30x
+            # slower and causes timeouts on large checkpoints (200+ MB).
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
             state = checkpoint.get('model_state_dict', checkpoint)
             model.load_state_dict(state)
 

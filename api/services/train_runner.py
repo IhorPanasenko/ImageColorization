@@ -124,6 +124,7 @@ class TrainRunner:
                 else:
                     if current.get('status') in ('finished', 'failed', 'stopped'):
                         break
+                    yield _json.dumps({'ping': True, 'status': current.get('status')})
                     time.sleep(2)
 
     def stop(self, run_id: str) -> bool:

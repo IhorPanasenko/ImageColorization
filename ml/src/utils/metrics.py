@@ -14,17 +14,23 @@ import torch
 import lpips
 
 
-# Module-level LPIPS model — initialized once on first use to avoid
-# reloading weights for every image during batch evaluation.
-_lpips_model = None
+# Module-level LPIPS model cache keyed by device string — initialized once
+# per device on first use to avoid reloading weights on every request.
+# LPIPS is used only for metric computation, so CPU is strongly preferred:
+# lpips 0.1.4 has known instability on MPS with torch >=2.6, and CPU is
+# fast enough for a single 256×256 image pair.
+_lpips_models: dict = {}
 
 
 def _get_lpips_model(device: str = "cpu") -> lpips.LPIPS:
-    global _lpips_model
-    if _lpips_model is None:
-        _lpips_model = lpips.LPIPS(net="alex").to(device)
-        _lpips_model.eval()
-    return _lpips_model
+    # Always run LPIPS on CPU to avoid MPS/CUDA compatibility issues in
+    # the lpips library (the metric calculation is not a bottleneck).
+    _device = "cpu"
+    if _device not in _lpips_models:
+        model = lpips.LPIPS(net="alex").to(_device)
+        model.eval()
+        _lpips_models[_device] = model
+    return _lpips_models[_device]
 
 
 def compute_psnr(pred: np.ndarray, target: np.ndarray) -> float:
@@ -69,18 +75,19 @@ def compute_lpips(pred: np.ndarray, target: np.ndarray, device: str = "cpu") -> 
     Args:
         pred:   Predicted RGB image, float32 in [0, 1], shape (H, W, 3).
         target: Ground-truth RGB image, float32 in [0, 1], shape (H, W, 3).
-        device: Torch device string — 'cpu', 'cuda', or 'mps'.
+        device: Ignored — LPIPS always runs on CPU to avoid lpips library
+                incompatibilities with MPS/CUDA in newer torch versions.
 
     Returns:
         LPIPS distance as a float.
     """
-    model = _get_lpips_model(device)
+    model = _get_lpips_model("cpu")
 
     def _to_tensor(img: np.ndarray) -> torch.Tensor:
         # LPIPS expects (1, 3, H, W) float tensors normalized to [-1, 1]
         t = torch.from_numpy(img.transpose(2, 0, 1)).float()  # (3, H, W)
         t = t * 2.0 - 1.0  # [0,1] -> [-1,1]
-        return t.unsqueeze(0).to(device)  # (1, 3, H, W)
+        return t.unsqueeze(0).to("cpu")  # (1, 3, H, W)
 
     with torch.no_grad():
         dist = model(_to_tensor(pred), _to_tensor(target))

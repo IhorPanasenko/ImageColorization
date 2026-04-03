@@ -42,7 +42,7 @@ def main() -> None:
         if not os.path.exists(dist):
             print('  WARNING: frontend/dist/ not found — run `cd frontend && npm run build` first.')
 
-    app.run(host=args.host, port=args.port, debug=args.debug)
+    app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
 
 
 if __name__ == '__main__':

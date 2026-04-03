@@ -25,10 +25,32 @@ _RESAMPLE = (
 
 def get_device() -> torch.device:
     """
-    Return the best available device: MPS (Apple Silicon) > CUDA > CPU.
+    Return the best available torch device for inference.
+
+    Priority: CUDA > CPU  (MPS disabled by default — see below).
+
+    MPS (Apple Silicon Metal) is disabled by default because PyTorch's MPS
+    backend can trigger non-catchable native crashes (SIGBUS / EXC_BAD_ACCESS)
+    on certain macOS / PyTorch / Python version combinations — for example
+    PyTorch 2.10 with Python 3.14 on Mac16,12 hardware running macOS 26.
+    These crashes occur inside the Metal runtime during complex conv/matmul
+    operations and kill the entire Python process; a simple smoke-test with
+    tiny tensors is not sufficient to detect the problem.
+
+    To re-enable MPS (e.g. after upgrading PyTorch to a version that
+    officially supports your Python / macOS release), set the environment
+    variable ``COLORIZE_DEVICE=mps``.
+
+    You can also force any device explicitly::
+
+        COLORIZE_DEVICE=cpu   python run.py
+        COLORIZE_DEVICE=mps   python run.py
+        COLORIZE_DEVICE=cuda  python run.py
     """
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
+    forced = os.environ.get("COLORIZE_DEVICE", "").strip().lower()
+    if forced:
+        return torch.device(forced)
+
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
