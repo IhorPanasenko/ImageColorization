@@ -10,8 +10,6 @@ from typing import Any, Callable
 
 import numpy as np
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
-import torch
-import lpips
 
 
 # Module-level LPIPS model cache keyed by device string — initialized once
@@ -22,12 +20,17 @@ import lpips
 _lpips_models: dict = {}
 
 
-def _get_lpips_model(device: str = "cpu") -> lpips.LPIPS:
+def _get_lpips_model(device: str = "cpu"):
+    # Lazy-import lpips and torch so that PSNR / SSIM remain available
+    # even when lpips or its transitive dependencies (sympy, etc.) are broken.
+    import lpips as _lpips
+    import torch  # noqa: F811
+
     # Always run LPIPS on CPU to avoid MPS/CUDA compatibility issues in
     # the lpips library (the metric calculation is not a bottleneck).
     _device = "cpu"
     if _device not in _lpips_models:
-        model = lpips.LPIPS(net="alex").to(_device)
+        model = _lpips.LPIPS(net="alex").to(_device)
         model.eval()
         _lpips_models[_device] = model
     return _lpips_models[_device]
@@ -81,15 +84,17 @@ def compute_lpips(pred: np.ndarray, target: np.ndarray, device: str = "cpu") -> 
     Returns:
         LPIPS distance as a float.
     """
+    import torch as _torch
+
     model = _get_lpips_model("cpu")
 
-    def _to_tensor(img: np.ndarray) -> torch.Tensor:
+    def _to_tensor(img: np.ndarray) -> _torch.Tensor:
         # LPIPS expects (1, 3, H, W) float tensors normalized to [-1, 1]
-        t = torch.from_numpy(img.transpose(2, 0, 1)).float()  # (3, H, W)
+        t = _torch.from_numpy(img.transpose(2, 0, 1)).float()  # (3, H, W)
         t = t * 2.0 - 1.0  # [0,1] -> [-1,1]
         return t.unsqueeze(0).to("cpu")  # (1, 3, H, W)
 
-    with torch.no_grad():
+    with _torch.no_grad():
         dist = model(_to_tensor(pred), _to_tensor(target))
 
     return float(dist.item())
@@ -118,12 +123,14 @@ def time_inference(
         ``(result, elapsed_ms)`` — *fn*'s return value and elapsed wall-clock
         time in milliseconds.
     """
+    import torch as _torch
+
     def _sync() -> None:
         if "cuda" in device:
-            torch.cuda.synchronize()
+            _torch.cuda.synchronize()
         elif "mps" in device:
             try:
-                torch.mps.synchronize()
+                _torch.mps.synchronize()
             except Exception:
                 pass
 

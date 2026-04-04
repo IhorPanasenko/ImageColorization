@@ -254,9 +254,7 @@ const canCompare = computed(
 const gridClass = computed(() => {
   const n = results.value.length
   if (n === 1) return 'grid-cols-1 max-w-lg'
-  if (n === 2) return 'grid-cols-1 lg:grid-cols-2'
-  if (n === 3) return 'grid-cols-1 lg:grid-cols-3'
-  return 'grid-cols-1 lg:grid-cols-2 xl:grid-cols-4'
+  return 'grid-cols-1 lg:grid-cols-2'
 })
 
 const radarSlots = computed((): RadarSlot[] =>
